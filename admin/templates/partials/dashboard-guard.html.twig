@@ -1,0 +1,33 @@
+<div id="guard-dashboard" class="dashboard-item admin-block default-box-shadow">
+    <h1>
+        <i class="fa fa-shield"></i> {{ 'Grav Guard' }}
+    </h1>
+
+    {# Custom class, not `widget-content`: the theme forces min-height:335px on
+       .widget-content (to match the notifications/feed widgets). This box sizes
+       to its content instead. #}
+    <div class="guard-widget-content" style="padding:0.25rem 1.5rem 1.25rem;">
+        {% if guard_installed %}
+            <p style="color:#16a34a;font-weight:600;margin:0 0 8px;">
+                <i class="fa fa-check-circle"></i> Guard Agent is active
+            </p>
+            <p style="margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#888;">Agent endpoint</p>
+            <code style="display:block;word-break:break-all;background:rgba(0,0,0,.04);padding:8px 10px;border-radius:6px;">{{ guard_endpoint }}</code>
+            <p style="margin:10px 0 0;color:#888;">Manage it — or re-pair — from Guard Cloud &rarr; Fleet.</p>
+        {% else %}
+            <p style="color:#d97706;font-weight:600;margin:0 0 8px;">
+                <i class="fa fa-exclamation-triangle"></i> The Guard Agent is not set up yet
+            </p>
+            <p style="margin:0 0 12px;">Install it to enable fleet updates, backups, and monitoring — no shell needed.</p>
+            <a href="{{ guard_setup_url }}" class="button" style="background:#2463eb;color:#fff;">
+                <i class="fa fa-shield"></i> Set up Guard Agent
+            </a>
+        {% endif %}
+
+        <p style="margin:14px 0 0;padding-top:12px;border-top:1px solid rgba(0,0,0,.08);font-size:13px;color:#888;">
+            No Guard Cloud account yet?
+            <a href="{{ guard_signup_url }}" target="_blank" rel="noopener">Create a free account at gravguard.com</a>
+            to add this site to your fleet.
+        </p>
+    </div>
+</div>

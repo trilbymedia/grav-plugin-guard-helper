@@ -29,3 +29,18 @@ form:
         0: PLUGIN_ADMIN.DISABLED
       validate:
         type: bool
+    cloud_url:
+      type: text
+      label: Guard Cloud URL
+      help: Trust-critical — the signed agent release is downloaded from here and the site pairs with it.
+      default: 'https://gravguard.com'
+    setup_route:
+      type: text
+      label: Setup page route
+      help: Frontend route serving the browser-only agent setup page (super-admin only).
+      default: '/_guard-setup'
+    signup_url:
+      type: text
+      label: Guard Cloud signup URL
+      help: Where users without a Guard Cloud account are sent to sign up free. Shown on the setup panel.
+      default: 'https://gravguard.com'

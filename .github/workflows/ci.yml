@@ -28,3 +28,25 @@ jobs:
       - name: Validate YAML
         run: |
           python3 -c "import yaml; yaml.safe_load(open('blueprints.yaml')); yaml.safe_load(open('guard-helper.yaml')); yaml.safe_load(open('languages.yaml'))"
+
+  test:
+    name: PHPUnit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: sodium, zip, pdo_sqlite
+          coverage: none
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress
+      - name: Test
+        run: composer test
+        # The full install/pair integration test skips when the sibling agent
+        # source isn't checked out (i.e. in this repo's standalone CI); the
+        # release-verification tests still run.
