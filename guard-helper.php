@@ -75,6 +75,10 @@ class GuardHelperPlugin extends Plugin
 
     public function onPluginsInitialized(): void
     {
+        // Guard Shield runs first — an endpoint-WAF pass that may block the
+        // request before any further work. Cheap (cached rules) and fail-open.
+        $this->evaluateShield();
+
         // The self-contained setup page. It serves BOTH the frontend fallback
         // route and the classic admin-menu route (handleSetup renders its own
         // HTML and exits, so it works in either context).
@@ -83,6 +87,55 @@ class GuardHelperPlugin extends Plugin
             // Defer to onPagesInitialized so the login plugin has authenticated
             // the user by the time we check permissions.
             $this->enable(['onPagesInitialized' => ['handleSetup', 0]]);
+        }
+    }
+
+    /**
+     * Guard Shield request filter. Fetches the signature-verified rule bundle
+     * (cached) and blocks or logs the request if a rule matches. Wrapped so a
+     * Shield error can never take the site down — it fails open.
+     */
+    private function evaluateShield(): void
+    {
+        if (\PHP_SAPI === 'cli' || !$this->config->get('plugins.guard-helper.shield.enabled', false)) {
+            return;
+        }
+        $publicKey = (string) $this->config->get('plugins.guard-helper.shield.public_key', '');
+        if ($publicKey === '') {
+            return;
+        }
+
+        try {
+            $url = rtrim($this->cloudUrl(), '/') . '/shield/rules.json';
+            $rules = (new \Grav\Plugin\GuardHelper\Shield\ShieldRules($this->grav))->rules($url, $publicKey);
+            if ($rules === []) {
+                return;
+            }
+
+            $method = (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET');
+            $path = (string) $this->grav['uri']->path();
+            $params = array_merge($_GET, $_POST);
+
+            $hit = \Grav\Plugin\GuardHelper\Shield\ShieldFilter::match($method, $path, $params, $rules);
+            if ($hit === null) {
+                return;
+            }
+
+            $ruleId = (string) ($hit['rule_id'] ?? 'unknown');
+            if (($hit['action'] ?? 'block') === 'log') {
+                $this->grav['log']->warning("Guard Shield matched (log) {$ruleId}: {$method} {$path}");
+
+                return;
+            }
+
+            $this->grav['log']->warning("Guard Shield blocked {$ruleId}: {$method} {$path}");
+            http_response_code(403);
+            header('Content-Type: text/plain; charset=utf-8');
+            header('X-Guard-Shield: blocked');
+            echo 'Forbidden';
+            exit;
+        } catch (\Throwable) {
+            // Shield must never break the site on its own failure — fail open.
         }
     }
 
@@ -263,7 +316,7 @@ class GuardHelperPlugin extends Plugin
                     'action'         => ['label' => 'Review', 'url' => rtrim($this->cloudUrl(), '/')],
                 ];
             }
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             // A failed check must never block the dashboard.
         }
 
