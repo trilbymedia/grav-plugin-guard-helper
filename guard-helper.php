@@ -163,6 +163,7 @@ class GuardHelperPlugin extends Plugin
         $routes->get('/' . self::SLUG . '/status', [$controller, 'status']);
         $routes->post('/' . self::SLUG . '/setup', [$controller, 'setup']);
         $routes->post('/' . self::SLUG . '/repair', [$controller, 'repair']);
+        $routes->get('/' . self::SLUG . '/security', [$controller, 'security']);
     }
 
     /** A "Guard" item in the admin-next sidebar → /plugin/guard-helper. */
@@ -221,23 +222,51 @@ class GuardHelperPlugin extends Plugin
     /** A dismissible top banner until the agent is set up (super-admin only). */
     public function onApiDashboardNotifications(Event $event): void
     {
-        if (!$this->eventUserIsSuperAdmin($event) || $this->bootstrap()->isInstalled()) {
+        if (!$this->eventUserIsSuperAdmin($event)) {
             return;
         }
 
         $notifications = $event['notifications'] ?? [];
-        $notifications['top'][] = [
-            'id'             => 'guard-helper-setup', // dismissed via the standard hide endpoint
-            'title'          => 'Grav Guard',
-            'message'        => 'The Guard Agent is not set up yet — install it to enable fleet updates, backups, and monitoring.',
-            'icon'           => 'ShieldCheck', // Lucide name; TopBanner renders it as an icon
 
-            'reappear_after' => '+1 week',
-            'action'         => [
-                'label' => 'Set up',
-                'url'   => $this->absoluteUrl($this->frontendRoute()),
-            ],
-        ];
+        // Setup nudge — shown only until the agent is installed.
+        if (!$this->bootstrap()->isInstalled()) {
+            $notifications['top'][] = [
+                'id'             => 'guard-helper-setup', // dismissed via the standard hide endpoint
+                'title'          => 'Grav Guard',
+                'message'        => 'The Guard Agent is not set up yet — install it to enable fleet updates, backups, and monitoring.',
+                'icon'           => 'ShieldCheck', // Lucide name; TopBanner renders it as an icon
+
+                'reappear_after' => '+1 week',
+                'action'         => [
+                    'label' => 'Set up',
+                    'url'   => $this->absoluteUrl($this->frontendRoute()),
+                ],
+            ];
+        }
+
+        // Free GravSec check — independent of the agent; never breaks the dashboard.
+        try {
+            $feedUrl = rtrim($this->cloudUrl(), '/') . '/feed/advisories.json';
+            $result = (new \Grav\Plugin\GuardHelper\Security\SecurityChecker($this->grav))->run($feedUrl);
+            $count = count($result['findings']);
+            if ($count > 0) {
+                $notifications['top'][] = [
+                    'id'             => 'guard-helper-vulns',
+                    'title'          => 'Security advisories',
+                    'message'        => sprintf(
+                        '%d known %s on this site\'s installed packages.',
+                        $count,
+                        $count === 1 ? 'vulnerability' : 'vulnerabilities'
+                    ),
+                    'icon'           => 'ShieldAlert',
+                    'reappear_after' => '+1 day',
+                    'action'         => ['label' => 'Review', 'url' => rtrim($this->cloudUrl(), '/')],
+                ];
+            }
+        } catch (\Throwable $e) {
+            // A failed check must never block the dashboard.
+        }
+
         $event['notifications'] = $notifications;
     }
 

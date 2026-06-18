@@ -10,6 +10,7 @@ use Grav\Plugin\Api\Exceptions\ValidationException;
 use Grav\Plugin\Api\Response\ApiResponse;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\Security\SecurityChecker;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -93,6 +94,21 @@ class GuardController extends AbstractApiController
         return ApiResponse::create($result);
     }
 
+    /**
+     * GET /guard-helper/security — the free in-admin checker. Matches this
+     * site's installed versions against the public GravSec feed; package list
+     * never leaves the box.
+     */
+    public function security(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requireSuperAdmin($request);
+
+        $result = (new SecurityChecker($this->grav))->run($this->feedUrl());
+        $result['cloud_url'] = $this->cloudUrl();
+
+        return ApiResponse::create($result);
+    }
+
     private function bootstrap(): AgentBootstrap
     {
         return new AgentBootstrap(GRAV_ROOT);
@@ -106,6 +122,12 @@ class GuardController extends AbstractApiController
     private function signupUrl(): string
     {
         return (string) $this->config->get('plugins.guard-helper.signup_url', 'https://gravguard.com');
+    }
+
+    /** Public GravSec advisory feed URL on the configured cloud. */
+    private function feedUrl(): string
+    {
+        return rtrim($this->cloudUrl(), '/') . '/feed/advisories.json';
     }
 
     private function absoluteEndpoint(string $path): string
