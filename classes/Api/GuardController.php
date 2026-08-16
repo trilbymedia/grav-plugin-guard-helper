@@ -44,6 +44,11 @@ class GuardController extends AbstractApiController
                 'sodium' => extension_loaded('sodium'),
                 'zip'    => extension_loaded('zip'),
             ],
+            // Installing in the browser needs no crontab, but RUNNING still
+            // wants one: the tick is the only thing that collects queued work.
+            // Null means we cannot tell yet (nothing unpacked, or an agent
+            // older than the probe) — the UI stays quiet rather than guessing.
+            'cron'          => $boot->cronStatus(),
         ]);
     }
 

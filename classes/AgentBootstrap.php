@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Grav\Plugin\GuardHelper;
 
+use GravGuard\Agent\Support\CronProbe;
 use ZipArchive;
 
 /**
@@ -20,6 +21,11 @@ use ZipArchive;
  *
  * The secrets land PHP-guarded (KeyStorage / DirGuard handle that). Returns the
  * single-use pairing code for the user to enter in Guard Cloud → Add Site.
+ *
+ * Needing no crontab to INSTALL is not the same as needing none to run: the
+ * agent's per-minute tick is the only thing that collects queued work, so a
+ * site installed this way takes no scheduled backups until someone schedules
+ * one. cronStatus() reports that, and the setup screen shows it.
  *
  * Zero runtime composer deps: the agent's classes come from the unpacked
  * release's own autoloader; this class is require()d by the plugin directly.
@@ -49,6 +55,36 @@ final class AgentBootstrap
     public function endpointPath(): string
     {
         return '/_guard/agent.php';
+    }
+
+    /**
+     * Whether this site can run the agent's per-minute tick, and whether it is.
+     *
+     * Installing in the browser needs no crontab, which is the whole point of
+     * this path — but it also means nothing sets one up, and until now nothing
+     * mentioned that. The tick is the only thing that collects queued work, so
+     * a site without one takes no scheduled backups and applies no scheduled
+     * updates while looking perfectly healthy. The setup screen has to say so,
+     * and offer the line for anyone who does have a cron manager.
+     *
+     * @return array{can_spawn:bool, crontab:bool, installed:bool, line:string, reason:string}|null
+     *   null before the agent is unpacked, when there is nothing to ask
+     */
+    public function cronStatus(): ?array
+    {
+        $autoload = $this->guardDir . '/src/autoload.php';
+        if (!is_file($autoload)) {
+            return null;
+        }
+        require_once $autoload;
+
+        if (!class_exists(CronProbe::class)) {
+            // An agent released before the probe existed. Not knowing is
+            // different from knowing there is no cron, so say nothing.
+            return null;
+        }
+
+        return CronProbe::inspect($this->guardDir);
     }
 
     /**

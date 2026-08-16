@@ -121,6 +121,51 @@ class GuardHelperPage extends HTMLElement {
 			</div></div>`;
 	}
 
+	// Installing here needs no crontab; running well still wants one. The tick
+	// is the only thing that collects queued work, so without it scheduled
+	// backups and updates never run — and that is invisible unless we say it.
+	//
+	// `known` comes first, and it matters: most managed hosts disable the spawn
+	// functions in the WEB pool, so from in here we usually cannot read the
+	// crontab at all. Telling a site with a perfectly good tick that it has
+	// none would be worse than saying nothing, so an unknown gets a milder
+	// note than a confirmed absence.
+	_cron(s) {
+		const cron = s.data?.cron;
+		if (!cron || cron.installed) return '';
+
+		const row = `<div class="field">
+			<div class="lbl">${cron.known ? 'Add this to your cron manager' : 'The line to add, if you have not already'}</div>
+			<div class="coderow">
+				<code class="code">${esc(cron.line || '')}</code>
+				<button class="btn ghost sm" data-copy="${esc(cron.line || '')}" title="Copy">Copy</button>
+			</div>
+		</div>`;
+
+		const fallback = `<span>Either way the site keeps working, and Guard Cloud delivers scheduled
+			work directly when it sees the agent is not checking in — slower, but it does happen.
+			Your fleet list flags any site that is not collecting.</span>`;
+
+		if (!cron.known) {
+			return `<div class="warn panel">
+				<span><strong>Scheduled task: could not check.</strong>
+				This server does not let PHP read the crontab from the admin, so we cannot tell whether
+				the agent's per-minute check-in is set up. It picks up scheduled backups, updates and
+				offsite uploads.</span>
+				${row}
+				${fallback}
+			</div>`;
+		}
+
+		return `<div class="warn panel">
+			<span><strong>No scheduled task set up.</strong>
+			The agent checks in every minute to pick up work — scheduled backups, updates and
+			offsite uploads all arrive that way, and none of them will run without it.</span>
+			${row}
+			${fallback}
+		</div>`;
+	}
+
 	_signup(s) {
 		const url = s.data?.signup_url || 'https://gravguard.com';
 		if (s.result) {
@@ -149,6 +194,7 @@ class GuardHelperPage extends HTMLElement {
 				<p class="muted">Enter these in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. The code is single-use; reload to start a new window if it expires.</p>
 				${this._codeRow('Pairing code', s.result.code)}
 				${this._codeRow('Agent endpoint', s.result.endpoint || s.result.endpoint_path || '')}
+				${this._cron(s)}
 				${this._signup(s)}
 			</div>`;
 		}
@@ -158,6 +204,7 @@ class GuardHelperPage extends HTMLElement {
 				<div class="status ok"><span class="dot"></span> Guard Agent is active</div>
 				<p class="muted">Installed and ready. To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it's single-use).</p>
 				${this._codeRow('Agent endpoint', s.data.endpoint || s.data.endpoint_path || '')}
+				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
 				<button id="repair-btn" class="btn ghost" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button>
 				${this._signup(s)}
@@ -178,7 +225,7 @@ class GuardHelperPage extends HTMLElement {
 
 		return `<div class="card">
 			<div class="status off"><span class="dot"></span> Not set up</div>
-			<p class="muted">This installs the standalone Guard Agent into <code>_guard/</code> and starts pairing — no shell, no crontab. A signed release is downloaded from <code>${esc(cloud)}</code> and verified before anything is written.</p>
+			<p class="muted">This installs the standalone Guard Agent into <code>_guard/</code> and starts pairing — no shell needed. A signed release is downloaded from <code>${esc(cloud)}</code> and verified before anything is written. Afterwards you'll be shown a scheduled task to add, if your host supports one.</p>
 			${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
 			${warn}
 			<button id="setup-btn" class="btn" ${s.busy || reqBad ? 'disabled' : ''}>${s.busy ? 'Setting up…' : 'Set up Guard Agent'}</button>
@@ -211,6 +258,13 @@ class GuardHelperPage extends HTMLElement {
 		.err { color:#dc2626; background:color-mix(in oklab,#dc2626 10%,transparent);
 			border:1px solid color-mix(in oklab,#dc2626 30%,transparent); border-radius:8px; padding:10px 12px; }
 		.warn { color:#d97706; font-size:13px; }
+		/* The cron notice carries a copyable line, so it needs to read as a
+		   panel rather than a stray sentence. */
+		.warn.panel { display:flex; flex-direction:column; gap:10px;
+			background:color-mix(in oklab,#d97706 8%,transparent);
+			border:1px solid color-mix(in oklab,#d97706 28%,transparent);
+			border-radius:8px; padding:12px 14px; }
+		.warn.panel strong { color:var(--foreground,#09090b); }
 		.btn { align-self:flex-start; border:0; border-radius:8px; padding:11px 18px; font-weight:600; font-size:14px;
 			cursor:pointer; background:var(--primary,#2463eb); color:var(--primary-foreground,#fff); }
 		.btn:hover:not(:disabled) { filter:brightness(1.05); }
