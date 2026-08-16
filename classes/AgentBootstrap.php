@@ -138,6 +138,16 @@ final class AgentBootstrap
             rmdir($inner);
         }
 
+        // ZipArchive::extractTo does not carry unix permission bits across, so
+        // the bin/ helpers land non-executable and `_guard/bin/pair` fails as a
+        // bare command — which is exactly what a customer gets told to run when
+        // their pairing code expires.
+        foreach (glob($this->guardDir . '/bin/*') ?: [] as $binFile) {
+            if (is_file($binFile)) {
+                @chmod($binFile, 0755);
+            }
+        }
+
         if (!is_file($this->guardDir . '/agent.php') || !is_file($this->guardDir . '/src/autoload.php')) {
             throw new BootstrapException('The unpacked release is missing expected files.');
         }
