@@ -44,6 +44,12 @@ jobs:
           extensions: sodium, zip, pdo_sqlite
           coverage: none
       - name: Install dependencies
+        # Authenticated, because composer fetches dists from codeload and an
+        # anonymous runner shares its rate limit with every other runner on
+        # that IP. Pushing these repos together was enough to trip it: all
+        # three failed the same minute with HTTP 429 on ordinary packages.
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
         run: composer install --no-interaction --no-progress
       - name: Test
         run: composer test
