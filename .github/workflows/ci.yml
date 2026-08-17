@@ -43,6 +43,22 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: sodium, zip, pdo_sqlite
           coverage: none
+      # Composer's own download cache, so a green run stops depending on
+      # codeload being reachable for every package on every run. Keyed on the
+      # manifest: agent and helper do not commit composer.lock, so hashFiles
+      # falls back to composer.json alone, and restore-keys still supplies a
+      # warm partial cache when that changes.
+      - name: Locate the composer cache
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-${{ hashFiles('composer.json', 'composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-
+
       - name: Install dependencies
         # Authenticated so composer is counted as somebody rather than as
         # anonymous traffic, which raises codeload's limit by orders of
