@@ -14,9 +14,9 @@ bugs: https://github.com/trilbymedia/grav-plugin-guard-helper/issues
 docs: https://github.com/trilbymedia/grav-plugin-guard-helper/blob/main/README.md
 license: MIT
 
-# Advertised to GPM. Without it the admin and `bin/gpm index` fall back to
-# DISPLAYING 1.7 for any package carrying no compatibility data, which is a
-# guess rather than a claim — so state it rather than be guessed at.
+# Advertised to GPM. Omitting it means 1.7, which is the baseline every
+# package predating this key correctly still has; declaring it is how a
+# plugin says it ALSO runs on a later generation.
 #
 # Both generations on purpose: the plugin drives admin2 component pages
 # where they exist and falls back to a classic admin menu entry, widget and
