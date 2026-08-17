@@ -2,7 +2,7 @@ name: Guard Helper
 slug: guard-helper
 type: plugin
 testing: true
-version: 0.2.0-beta.1
+version: 0.2.0-beta.2
 description: Optional companion plugin for Grav Guard — in-admin health checker, SSO token consumption, and Guard Shield hooks. The Guard control channel never depends on this plugin.
 icon: shield
 author:
@@ -14,8 +14,20 @@ bugs: https://github.com/trilbymedia/grav-plugin-guard-helper/issues
 docs: https://github.com/trilbymedia/grav-plugin-guard-helper/blob/main/README.md
 license: MIT
 
+# Advertised to GPM. Without it the admin and `bin/gpm index` fall back to
+# DISPLAYING 1.7 for any package carrying no compatibility data, which is a
+# guess rather than a claim — so state it rather than be guessed at.
+#
+# Both generations on purpose: the plugin drives admin2 component pages
+# where they exist and falls back to a classic admin menu entry, widget and
+# frontend route where they do not. Guard protects 1.7 sites, so its
+# companion plugin has to reach them.
+compatibility:
+  grav: ['1.7', '2.0']
+
 dependencies:
-  - { name: grav, version: '>=2.0' }
+  - { name: grav, version: ">=1.7.51" }
+  - { name: php, version: ">=8.1" }
 
 form:
   validation: loose

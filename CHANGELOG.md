@@ -1,3 +1,10 @@
+# v0.2.0-beta.2
+## 08/17/2026
+
+1. [](#improved)
+    * Declares which Grav generations it supports (1.7 and 2.0), so the admin and `bin/gpm index` stop guessing — a package with no compatibility data is displayed as 1.7 whatever it actually needs
+    * Dependencies now name a real floor: Grav 1.7.51 and PHP 8.1
+
 # v0.2.0-beta.1
 ## 08/17/2026
 
