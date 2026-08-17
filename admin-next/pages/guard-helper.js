@@ -121,49 +121,92 @@ class GuardHelperPage extends HTMLElement {
 			</div></div>`;
 	}
 
-	// Installing here needs no crontab; running well still wants one. The tick
-	// is the only thing that collects queued work, so without it scheduled
-	// backups and updates never run — and that is invisible unless we say it.
+	// "Is Guard Cloud reaching this site?" is the only question worth putting in
+	// front of someone here, and it is answerable: the agent stamps every
+	// verified inbound command and every completed mailbox poll. Whether a
+	// crontab exists is a detail of HOW work arrives, so it belongs behind a
+	// disclosure, not in the reader's face.
 	//
-	// `known` comes first, and it matters: most managed hosts disable the spawn
+	// Deliberately not a freshness threshold. Pushes are work-driven, so an
+	// idle site can legitimately go days without one, and "no contact in 24h"
+	// would cry wolf on a perfectly healthy install.
+	_delivery(s) {
+		const d = s.data?.delivery;
+		if (!d) return '';
+
+		if (!d.reachable) {
+			return `<div class="status-row warn-row">
+				<span class="dot"></span>
+				<div>
+					<strong>Guard Cloud has not reached this site yet.</strong>
+					<p class="hint">This is expected until you finish pairing. Once the site is added in
+					Guard Cloud, work is delivered over HTTPS to the agent endpoint automatically — there
+					is nothing to install.</p>
+				</div>
+			</div>`;
+		}
+
+		const seen = Math.max(d.last_tick_at || 0, d.last_push_at || 0);
+		const how = d.channel === 'tick'
+			? 'The agent is checking in on a schedule'
+			: 'Guard Cloud is delivering work straight to this site';
+
+		return `<div class="status-row ok-row">
+			<span class="dot"></span>
+			<div>
+				<strong>Guard Cloud is reaching this site.</strong>
+				<p class="hint">${how} — last contact ${esc(ago(seen))}. Scheduled backups, updates
+				and offsite uploads are being delivered.</p>
+			</div>
+		</div>`;
+	}
+
+	// The advanced path, collapsed by default. Adding a cron makes work arrive
+	// within a minute instead of within a few minutes; it is an optimisation,
+	// not a requirement, and presenting it as a requirement is what made this
+	// screen read as a wall of warnings.
+	//
+	// `known` still matters inside: most managed hosts disable the spawn
 	// functions in the WEB pool, so from in here we usually cannot read the
-	// crontab at all. Telling a site with a perfectly good tick that it has
-	// none would be worse than saying nothing, so an unknown gets a milder
-	// note than a confirmed absence.
+	// crontab. Claiming a site with a perfectly good tick has none would be
+	// worse than saying nothing.
 	_cron(s) {
 		const cron = s.data?.cron;
 		if (!cron || cron.installed) return '';
 
-		const row = `<div class="field">
-			<div class="lbl">${cron.known ? 'Add this to your cron manager' : 'The line to add, if you have not already'}</div>
-			<div class="coderow">
-				<code class="code">${esc(cron.line || '')}</code>
-				<button class="btn ghost sm" data-copy="${esc(cron.line || '')}" title="Copy">Copy</button>
+		const line = cron.line || '';
+		// Appends without opening an editor, which is the part people get stuck
+		// on: `crontab -e` drops them into vi on most hosts. Reads the existing
+		// crontab first so it adds to it rather than replacing it.
+		const oneLiner = `( crontab -l 2>/dev/null; echo "${line}" ) | crontab -`;
+
+		const caveat = cron.known
+			? ''
+			: `<p class="hint">This server does not let PHP read the crontab from the admin, so we
+				cannot tell whether one is already set up. If you have added it, nothing here is needed.</p>`;
+
+		return `<details class="adv">
+			<summary>Run work every minute instead (optional)</summary>
+			<div class="adv-body">
+				<p class="hint">Work already arrives without this. A scheduled task just makes the agent
+				collect it every minute rather than waiting for Guard Cloud to push it, which is a little
+				faster and a little more efficient on large sites. It needs shell access.</p>
+				${caveat}
+				<div class="field">
+					<div class="lbl">Run this once over SSH</div>
+					<div class="coderow">
+						<code class="code">${esc(oneLiner)}</code>
+						<button class="btn ghost sm" data-copy="${esc(oneLiner)}" title="Copy">Copy</button>
+					</div>
+					<p class="hint">Adds to your existing crontab, it does not replace it. To add it by hand,
+					or through your host's control panel, schedule this line every minute:</p>
+					<div class="coderow">
+						<code class="code">${esc(line)}</code>
+						<button class="btn ghost sm" data-copy="${esc(line)}" title="Copy">Copy</button>
+					</div>
+				</div>
 			</div>
-		</div>`;
-
-		const fallback = `<span>Either way the site keeps working, and Guard Cloud delivers scheduled
-			work directly when it sees the agent is not checking in — slower, but it does happen.
-			Your fleet list flags any site that is not collecting.</span>`;
-
-		if (!cron.known) {
-			return `<div class="warn panel">
-				<span><strong>Scheduled task: could not check.</strong>
-				This server does not let PHP read the crontab from the admin, so we cannot tell whether
-				the agent's per-minute check-in is set up. It picks up scheduled backups, updates and
-				offsite uploads.</span>
-				${row}
-				${fallback}
-			</div>`;
-		}
-
-		return `<div class="warn panel">
-			<span><strong>No scheduled task set up.</strong>
-			The agent checks in every minute to pick up work — scheduled backups, updates and
-			offsite uploads all arrive that way, and none of them will run without it.</span>
-			${row}
-			${fallback}
-		</div>`;
+		</details>`;
 	}
 
 	_signup(s) {
@@ -194,6 +237,7 @@ class GuardHelperPage extends HTMLElement {
 				<p class="muted">Enter these in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. The code is single-use; reload to start a new window if it expires.</p>
 				${this._codeRow('Pairing code', s.result.code)}
 				${this._codeRow('Agent endpoint', s.result.endpoint || s.result.endpoint_path || '')}
+				${this._delivery(s)}
 				${this._cron(s)}
 				${this._signup(s)}
 			</div>`;
@@ -204,6 +248,7 @@ class GuardHelperPage extends HTMLElement {
 				<div class="status ok"><span class="dot"></span> Guard Agent is active</div>
 				<p class="muted">Installed and ready. To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it's single-use).</p>
 				${this._codeRow('Agent endpoint', s.data.endpoint || s.data.endpoint_path || '')}
+				${this._delivery(s)}
 				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
 				<button id="repair-btn" class="btn ghost" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button>
@@ -265,6 +310,33 @@ class GuardHelperPage extends HTMLElement {
 			border:1px solid color-mix(in oklab,#d97706 28%,transparent);
 			border-radius:8px; padding:12px 14px; }
 		.warn.panel strong { color:var(--foreground,#09090b); }
+		/* Explanatory text: guidance rather than warning, so it reads in the
+		   normal muted colour wherever it appears. */
+		.hint { color:var(--muted-foreground,#71717a); font-size:13px;
+			margin:0; line-height:1.5; }
+		/* The headline answer — a single line with a coloured dot, so the state
+		   is readable at a glance instead of having to be inferred from prose. */
+		.status-row { display:flex; gap:10px; align-items:flex-start; margin-top:18px;
+			padding:12px 14px; border-radius:8px; }
+		.status-row .dot { flex:none; margin-top:6px; }
+		.status-row strong { display:block; font-size:14px; margin-bottom:2px; }
+		.ok-row { background:color-mix(in oklab,#16a34a 8%,transparent);
+			border:1px solid color-mix(in oklab,#16a34a 26%,transparent); }
+		.ok-row .dot { background:#16a34a; }
+		.warn-row { background:color-mix(in oklab,#d97706 8%,transparent);
+			border:1px solid color-mix(in oklab,#d97706 28%,transparent); }
+		.warn-row .dot { background:#d97706; }
+		/* Collapsed by default: this is the optional, shell-only route, and
+		   leaving it open turned the page into a wall of instructions. */
+		.adv { margin-top:14px; border:1px solid var(--border,#e4e4e7); border-radius:8px; }
+		.adv > summary { cursor:pointer; padding:10px 14px; font-size:13px; font-weight:600;
+			color:var(--muted-foreground,#71717a); list-style:none; }
+		.adv > summary::-webkit-details-marker { display:none; }
+		.adv > summary::before { content:'▸'; display:inline-block; width:1em; }
+		.adv[open] > summary::before { content:'▾'; }
+		.adv > summary:hover { color:var(--foreground,#09090b); }
+		.adv-body { padding:0 14px 14px; display:flex; flex-direction:column; gap:10px;
+			border-top:1px solid var(--border,#e4e4e7); padding-top:12px; }
 		.btn { align-self:flex-start; border:0; border-radius:8px; padding:11px 18px; font-weight:600; font-size:14px;
 			cursor:pointer; background:var(--primary,#2463eb); color:var(--primary-foreground,#fff); }
 		.btn:hover:not(:disabled) { filter:brightness(1.05); }
@@ -282,6 +354,20 @@ class GuardHelperPage extends HTMLElement {
 function esc(v) {
 	return String(v ?? '').replace(/[&<>"']/g, (c) =>
 		({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Coarse on purpose: the point is "recently" vs "a while ago", and a precise
+// figure would invite reading significance into normal variation.
+function ago(unixSeconds) {
+	if (!unixSeconds) return 'never';
+	const secs = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);
+	if (secs < 90) return 'just now';
+	const mins = Math.round(secs / 60);
+	if (mins < 60) return `${mins} minutes ago`;
+	const hours = Math.round(mins / 60);
+	if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+	const days = Math.round(hours / 24);
+	return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 customElements.define(TAG, GuardHelperPage);

@@ -49,6 +49,10 @@ class GuardController extends AbstractApiController
             // Null means we cannot tell yet (nothing unpacked, or an agent
             // older than the probe) — the UI stays quiet rather than guessing.
             'cron'          => $boot->cronStatus(),
+            // The headline: is Guard Cloud actually reaching this site? That
+            // is what the screen leads with; cron is one way of achieving it,
+            // not the question itself.
+            'delivery'      => $boot->deliveryStatus(),
         ]);
     }
 

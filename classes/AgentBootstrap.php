@@ -88,6 +88,83 @@ final class AgentBootstrap
     }
 
     /**
+     * Has Guard Cloud actually reached this site, and how recently?
+     *
+     * This is the question the setup screen should lead with. Whether a
+     * crontab entry exists is a detail of HOW work arrives; whether work
+     * arrives at all is the thing the user cares about, and it is answerable
+     * because the agent stamps every verified inbound command (push) and every
+     * completed mailbox poll (pull).
+     *
+     * `reachable` is deliberately "has it ever happened", not "recently".
+     * Pushes are work-driven, so a perfectly healthy site with nothing to do
+     * can go days without one, and a freshness threshold would turn that into
+     * a false alarm. The timestamps are returned so the screen can say when,
+     * and the caller can draw its own conclusions.
+     *
+     * @return array{reachable:bool, channel:?string, last_push_at:?int, last_tick_at:?int}|null
+     *   null before the agent is installed, when there is nothing to ask
+     */
+    public function deliveryStatus(): ?array
+    {
+        if (!$this->isInstalled()) {
+            return null;
+        }
+
+        $push = $this->stateInt('delivery.last_push_at');
+        $tick = $this->stateInt('delivery.last_tick_at');
+        if ($push === null && $tick === null) {
+            return ['reachable' => false, 'channel' => null, 'last_push_at' => null, 'last_tick_at' => null];
+        }
+
+        return [
+            'reachable' => true,
+            // Whichever channel spoke to us most recently is the one carrying
+            // this site's work today.
+            'channel' => ($tick ?? 0) >= ($push ?? 0) ? 'tick' : 'push',
+            'last_push_at' => $push,
+            'last_tick_at' => $tick,
+        ];
+    }
+
+    /**
+     * Read one key from the agent's state DB.
+     *
+     * The DB has a randomized filename (so it stays unfetchable even where
+     * .htaccess is ignored), recorded in the PHP-guarded data/config.php —
+     * so resolve it the same way the agent's own entry points do rather than
+     * guessing at a path.
+     */
+    private function stateInt(string $key): ?int
+    {
+        $autoload = $this->guardDir . '/src/autoload.php';
+        if (!is_file($autoload)) {
+            return null;
+        }
+        require_once $autoload;
+        if (!class_exists(\GravGuard\Agent\State\StateStore::class)) {
+            return null;
+        }
+
+        $config = @include $this->guardDir . '/data/config.php';
+        $db = (is_array($config) && !empty($config['db'])) ? (string)$config['db'] : 'agent.db';
+        $path = $this->guardDir . '/data/' . $db;
+        if (!is_file($path)) {
+            return null;
+        }
+
+        try {
+            $value = (new \GravGuard\Agent\State\StateStore($path))->get($key);
+        } catch (\Throwable $e) {
+            // A locked or unreadable state DB is not worth failing the page
+            // over — the screen just shows "not seen yet".
+            return null;
+        }
+
+        return ($value === null || $value === '') ? null : (int)$value;
+    }
+
+    /**
      * Download, verify, unpack, and pair. Returns:
      *   ['code' => '…', 'key_id' => '…', 'endpoint_path' => '/_guard/agent.php', 'ttl' => 900]
      *

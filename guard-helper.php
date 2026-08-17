@@ -403,6 +403,129 @@ class GuardHelperPlugin extends Plugin
         return $user !== null && (bool) $user->get('access.admin.super', false);
     }
 
+    /**
+     * The scheduled-task notice, for the no-admin2 setup page.
+     *
+     * This page is the on-ramp for a plain Grav site, and until now it finished
+     * at "agent installed" without ever mentioning that the per-minute tick is
+     * the only thing that collects queued work — so a site could sit here
+     * looking perfectly set up while every scheduled backup and update waited
+     * forever. The admin2 page says this; this one has to as well.
+     *
+     * Returns '' when a tick is already scheduled, and stays quiet about the
+     * distinction between "no cron" and "cannot tell": most managed hosts
+     * disable the spawn functions in the web pool, so from in here we usually
+     * cannot read the crontab, and telling a perfectly healthy site it has no
+     * tick would be worse than saying nothing.
+     */
+    private function cronNotice(AgentBootstrap $boot): string
+    {
+        return $this->deliveryNotice($boot) . $this->cronDetails($boot);
+    }
+
+    /**
+     * The headline: is Guard Cloud reaching this site?
+     *
+     * Green once it has, amber until then. Not a freshness threshold —
+     * pushes are work-driven, so an idle site can legitimately go days
+     * without one and a timeout would cry wolf on a healthy install.
+     */
+    private function deliveryNotice(AgentBootstrap $boot): string
+    {
+        $d = $boot->deliveryStatus();
+        if ($d === null) {
+            return '';
+        }
+
+        if (!($d['reachable'] ?? false)) {
+            return '
+                <div class="state amber">
+                    <strong>Guard Cloud has not reached this site yet.</strong>
+                    <p class="muted">Expected until pairing is finished. Once the site is added in Guard
+                    Cloud, work is delivered over HTTPS to the agent endpoint automatically &mdash; there
+                    is nothing to install.</p>
+                </div>';
+        }
+
+        $seen = max((int) ($d['last_tick_at'] ?? 0), (int) ($d['last_push_at'] ?? 0));
+        $how = ($d['channel'] ?? '') === 'tick'
+            ? 'The agent is checking in on a schedule'
+            : 'Guard Cloud is delivering work straight to this site';
+
+        return '
+            <div class="state green">
+                <strong>Guard Cloud is reaching this site.</strong>
+                <p class="muted">' . $how . ' &mdash; last contact ' . self::ago($seen) . '. Scheduled
+                backups, updates and offsite uploads are being delivered.</p>
+            </div>';
+    }
+
+    /**
+     * The optional, shell-only optimisation, collapsed.
+     *
+     * A cron makes work arrive within a minute rather than within a few, which
+     * is worth offering and not worth leading with — presenting it as a
+     * requirement is what turned this screen into a wall of instructions.
+     */
+    private function cronDetails(AgentBootstrap $boot): string
+    {
+        $cron = $boot->cronStatus();
+        if ($cron === null || ($cron['installed'] ?? false)) {
+            return '';
+        }
+
+        $e = static fn($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        $line = (string) ($cron['line'] ?? '');
+        // Appends rather than opening an editor — `crontab -e` drops most
+        // people into vi, which is where they get stuck.
+        $oneLiner = '( crontab -l 2>/dev/null; echo "' . $line . '" ) | crontab -';
+
+        // Most managed hosts disable the spawn functions in the web pool, so
+        // from in here we usually cannot read the crontab at all.
+        $caveat = ($cron['known'] ?? false) ? '' :
+            '<p class="muted">This server does not let PHP read the crontab from here, so we cannot tell
+             whether one is already set up. If you have added it, nothing here is needed.</p>';
+
+        return '
+            <details class="adv">
+                <summary>Run work every minute instead (optional)</summary>
+                <div class="adv-body">
+                    <p class="muted">Work already arrives without this. A scheduled task just makes the
+                    agent collect it every minute rather than waiting for Guard Cloud to push it, which is
+                    a little faster and a little more efficient on large sites. It needs shell access.</p>
+                    ' . $caveat . '
+                    <label>Run this once over SSH</label>
+                    <div class="code">' . $e($oneLiner) . '</div>
+                    <p class="muted">This adds to your existing crontab rather than replacing it. To add it
+                    by hand, or through your host&rsquo;s control panel, schedule this line every minute:</p>
+                    <div class="code">' . $e($line) . '</div>
+                </div>
+            </details>';
+    }
+
+    /** Coarse on purpose: "recently" vs "a while ago", not a precise figure. */
+    private static function ago(int $unixSeconds): string
+    {
+        if ($unixSeconds <= 0) {
+            return 'never';
+        }
+        $secs = max(0, time() - $unixSeconds);
+        if ($secs < 90) {
+            return 'just now';
+        }
+        $mins = (int) round($secs / 60);
+        if ($mins < 60) {
+            return "$mins minutes ago";
+        }
+        $hours = (int) round($mins / 60);
+        if ($hours < 24) {
+            return $hours . ' hour' . ($hours === 1 ? '' : 's') . ' ago';
+        }
+        $days = (int) round($hours / 24);
+
+        return $days . ' day' . ($days === 1 ? '' : 's') . ' ago';
+    }
+
     /** Build the self-contained HTML page. */
     private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error): string
     {
@@ -418,13 +541,15 @@ class GuardHelperPlugin extends Plugin
                 <div class="code">' . $e($result['code']) . '</div>
                 <label>Agent endpoint</label>
                 <div class="code">' . $e($endpoint) . '</div>
-                <p class="muted">The code is single-use. If it expires, reload this page to start a new pairing window.</p>';
+                <p class="muted">The code is single-use. If it expires, reload this page to start a new pairing window.</p>'
+                . $this->cronNotice($boot);
         } elseif ($boot->isInstalled()) {
             $body = '
                 <div class="ok">The Guard Agent is installed.</div>
                 <label>Agent endpoint</label>
                 <div class="code">' . $e($endpoint) . '</div>
-                <p class="muted">To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it is single-use).</p>
+                <p class="muted">To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it is single-use).</p>'
+                . $this->cronNotice($boot) . '
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
                     <input type="hidden" name="guard-action" value="repair">
@@ -490,6 +615,19 @@ class GuardHelperPlugin extends Plugin
   .muted{color:var(--muted);font-size:13px}
   .ok{color:var(--ok);font-weight:600;margin-bottom:8px}
   .err{background:#fceeee;color:var(--err);border:1px solid #f5c2bd;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px}
+  .state{margin-top:18px;padding:12px 14px;border-radius:8px;border-left-width:4px;border-left-style:solid}
+  .state > strong{display:block;font-size:14px;margin-bottom:2px}
+  .state p{margin:0}
+  .state.green{background:color-mix(in oklab,var(--ok) 8%,transparent);border:1px solid color-mix(in oklab,var(--ok) 26%,transparent);border-left:4px solid var(--ok)}
+  .state.amber{background:color-mix(in oklab,#d97706 8%,transparent);border:1px solid color-mix(in oklab,#d97706 28%,transparent);border-left:4px solid #d97706}
+  .adv{margin-top:14px;border:1px solid var(--border);border-radius:8px}
+  .adv > summary{cursor:pointer;padding:10px 14px;font-size:13px;font-weight:600;color:var(--muted);list-style:none}
+  .adv > summary::-webkit-details-marker{display:none}
+  .adv > summary::before{content:"\\25B8";display:inline-block;width:1em}
+  .adv[open] > summary::before{content:"\\25BE"}
+  .adv > summary:hover{color:var(--fg)}
+  .adv-body{padding:0 14px 14px;border-top:1px solid var(--border);padding-top:12px}
+  .adv-body label{margin-top:12px}
   .signup{margin-top:18px;padding:12px 14px;background:color-mix(in oklab,var(--primary) 8%,transparent);border:1px solid color-mix(in oklab,var(--primary) 25%,transparent);border-radius:8px;font-size:14px}
   .signup a,.signup-foot a{color:var(--primary);font-weight:600}
   .signup-foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
