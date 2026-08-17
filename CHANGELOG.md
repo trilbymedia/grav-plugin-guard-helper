@@ -1,3 +1,18 @@
+# v0.2.0-beta.1
+## 08/17/2026
+
+1. [](#new)
+    * Guard page now leads with whether the control channel is working — a green or amber status line instead of a block of setup text, with cron kept collapsed as the advanced route
+    * Free in-admin security checker, reading the public GravSec feed
+    * Guard Shield: a signed request-filter that blocks hostile endpoint traffic
+    * Agent setup works across both admins, with a dashboard widget and banner, browser-based install, and re-pairing
+2. [](#improved)
+    * Tells you when the site has no scheduled task, rather than silently never collecting queued work
+    * Unpacked agent binaries are made executable, so installs on hosts with strict umasks work first time
+3. [](#bugfix)
+    * Fixed the plugin's own status route returning "No route matches" right after install
+    * Push and cron check-ins are tracked separately, so an unauthenticated ping can no longer make delivery look healthy
+
 # v0.1.0
 ## 06/13/2026
 

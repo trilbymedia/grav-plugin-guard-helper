@@ -1,7 +1,8 @@
 name: Guard Helper
 slug: guard-helper
 type: plugin
-version: 0.1.0
+testing: true
+version: 0.2.0-beta.1
 description: Optional companion plugin for Grav Guard — in-admin health checker, SSO token consumption, and Guard Shield hooks. The Guard control channel never depends on this plugin.
 icon: shield
 author:
