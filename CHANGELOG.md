@@ -1,3 +1,12 @@
+# v0.2.0-beta.3
+## 08/18/2026
+
+1. [](#new)
+    * The Guard page now shows which plugin and agent versions are running, and names the newer agent when one is available
+    * Added a link straight through to your fleet in Guard Cloud
+2. [](#improved)
+    * The pairing code now appears directly beneath the button that generated it, instead of in a separate panel further up the page
+
 # v0.2.0-beta.2
 ## 08/17/2026
 
