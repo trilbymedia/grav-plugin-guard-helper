@@ -209,6 +209,52 @@ class GuardHelperPage extends HTMLElement {
 		</details>`;
 	}
 
+	/**
+	 * What is actually running here. The agent version is the one people need
+	 * when something misbehaves, and it was nowhere on this screen.
+	 */
+	_versions(s) {
+		const d = s.data || {};
+		const plugin = d.plugin_version ? `<span class="ver"><span class="ver-k">Plugin</span> ${esc(d.plugin_version)}</span>` : '';
+		if (!d.agent_version) return plugin ? `<div class="vers">${plugin}</div>` : '';
+
+		let agent = `<span class="ver"><span class="ver-k">Agent</span> ${esc(d.agent_version)}</span>`;
+		if (d.agent_outdated === true) {
+			// Say what to move TO, not just that it is behind — "out of date" with
+			// no target is a worry rather than an instruction.
+			agent += `<span class="ver-new">update available: ${esc(d.agent_latest)}</span>`;
+		} else if (d.agent_outdated === null) {
+			// Could not ask the cloud. Not the same as being current.
+			agent += `<span class="ver-unknown">latest unknown</span>`;
+		}
+
+		return `<div class="vers">${plugin}${agent}</div>`;
+	}
+
+	/** Button and code in one place — the code used to render far above it. */
+	_pairing(s) {
+		const btn = `<button id="repair-btn" class="btn ghost" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button>`;
+		if (!s.result) {
+			return `<div class="pair-block">${btn}</div>`;
+		}
+		const ttlMin = Math.round((s.result.ttl || 0) / 60);
+		return `<div class="pair-block">
+			${btn}
+			<div class="pair-out">
+				<p class="muted">Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. Single-use; generate another if it expires.</p>
+				${this._codeRow('Pairing code', s.result.code)}
+			</div>
+		</div>`;
+	}
+
+	/** Straight through to the fleet, so this page is not a dead end. */
+	_manage(s) {
+		const url = s.data?.manage_url;
+		if (!url) return '';
+
+		return `<p class="manage"><a href="${esc(url)}" target="_blank" rel="noopener">Manage this site in Guard Cloud →</a></p>`;
+	}
+
 	_signup(s) {
 		const url = s.data?.signup_url || 'https://gravguard.com';
 		if (s.result) {
@@ -230,28 +276,21 @@ class GuardHelperPage extends HTMLElement {
 
 		const cloud = s.data?.cloud_url || '';
 
-		if (s.result) {
-			const ttlMin = Math.round((s.result.ttl || 0) / 60);
+		// One card whether or not a code has just been generated. Two branches
+		// meant the code rendered in a different place from the button that
+		// produced it, which reads as though something else happened.
+		if (s.data?.installed || s.result) {
+			const justInstalled = !!s.result && !s.data?.installed;
 			return `<div class="card">
-				<div class="status ok"><span class="dot"></span> Guard Agent installed — pairing started</div>
-				<p class="muted">Enter these in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. The code is single-use; reload to start a new window if it expires.</p>
-				${this._codeRow('Pairing code', s.result.code)}
-				${this._codeRow('Agent endpoint', s.result.endpoint || s.result.endpoint_path || '')}
-				${this._delivery(s)}
-				${this._cron(s)}
-				${this._signup(s)}
-			</div>`;
-		}
-
-		if (s.data?.installed) {
-			return `<div class="card">
-				<div class="status ok"><span class="dot"></span> Guard Agent is active</div>
+				<div class="status ok"><span class="dot"></span> ${justInstalled ? 'Guard Agent installed — pairing started' : 'Guard Agent is active'}</div>
+				${this._versions(s)}
 				<p class="muted">Installed and ready. To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it's single-use).</p>
-				${this._codeRow('Agent endpoint', s.data.endpoint || s.data.endpoint_path || '')}
+				${this._codeRow('Agent endpoint', s.data?.endpoint || s.result?.endpoint || s.data?.endpoint_path || '')}
 				${this._delivery(s)}
 				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
-				<button id="repair-btn" class="btn ghost" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button>
+				${this._pairing(s)}
+				${this._manage(s)}
 				${this._signup(s)}
 			</div>`;
 		}
@@ -343,6 +382,19 @@ class GuardHelperPage extends HTMLElement {
 		.btn:disabled { opacity:.6; cursor:default; }
 		.btn.ghost { background:transparent; color:var(--foreground,#09090b); border:1px solid var(--border,#e4e4e7); }
 		.btn.sm { padding:6px 12px; font-size:12px; }
+		.vers { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:-4px 0 12px; }
+		.ver { font-size:12px; color:var(--muted-fg,#71717a); }
+		.ver-k { text-transform:uppercase; letter-spacing:.04em; font-weight:600; margin-right:4px; }
+		.ver-new { font-size:12px; font-weight:600; color:var(--warning,#b45309);
+			background:var(--warning-bg,rgba(180,83,9,.12)); padding:2px 8px; border-radius:99px; }
+		.ver-unknown { font-size:12px; color:var(--muted-fg,#71717a); font-style:italic; }
+		.pair-block { margin-top:14px; }
+		.pair-out { margin-top:12px; padding:12px 14px; border-radius:8px;
+			border:1px solid var(--border,#e4e4e7); background:var(--muted-bg,rgba(0,0,0,.02)); }
+		.pair-out .muted { margin-top:0; }
+		.manage { margin:14px 0 0; font-size:13px; }
+		.manage a { color:var(--primary,#2463eb); font-weight:600; text-decoration:none; }
+		.manage a:hover { text-decoration:underline; }
 		.signup { padding:12px 14px; border-radius:8px; font-size:13px;
 			background:color-mix(in oklab,var(--primary,#2463eb) 8%,transparent);
 			border:1px solid color-mix(in oklab,var(--primary,#2463eb) 25%,transparent); }

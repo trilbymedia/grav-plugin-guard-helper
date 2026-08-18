@@ -134,6 +134,54 @@ final class AgentBootstrapTest extends TestCase
         return $bytes;
     }
 
+    /** The version people need when something misbehaves, read from the agent itself. */
+    public function testReportsTheInstalledAgentVersion(): void
+    {
+        $boot = new AgentBootstrap($this->gravRoot);
+        $this->assertNull($boot->agentVersion(), 'nothing installed yet');
+
+        mkdir($this->gravRoot . '/_guard/src', 0777, true);
+        file_put_contents(
+            $this->gravRoot . '/_guard/src/Version.php',
+            "<?php\nfinal class Version { public const VERSION = '0.1.34-dev'; }\n"
+        );
+
+        $this->assertSame('0.1.34-dev', $boot->agentVersion());
+    }
+
+    /**
+     * A cloud we cannot reach must report "unknown", never "current" — the
+     * whole point of the badge is to be trusted when it says nothing is wrong.
+     */
+    public function testUnknownLatestIsNotTreatedAsUpToDate(): void
+    {
+        $unreachable = new AgentBootstrap($this->gravRoot, static fn(string $u): ?string => null);
+        $this->assertNull($unreachable->latestAgentVersion('https://cloud.test'));
+
+        $malformed = new AgentBootstrap($this->gravRoot, static fn(string $u): ?string => 'not json');
+        $this->assertNull($malformed->latestAgentVersion('https://cloud.test'));
+
+        $empty = new AgentBootstrap($this->gravRoot, static fn(string $u): ?string => '{"version":""}');
+        $this->assertNull($empty->latestAgentVersion('https://cloud.test'));
+    }
+
+    public function testReadsTheLatestVersionFromTheInstallManifest(): void
+    {
+        $seen = null;
+        $boot = new AgentBootstrap($this->gravRoot, static function (string $url) use (&$seen): ?string {
+            $seen = $url;
+
+            return json_encode(['version' => '0.2.0', 'zip_sha256' => str_repeat('0', 64)]);
+        });
+
+        $this->assertSame('0.2.0', $boot->latestAgentVersion('https://cloud.test/'));
+        $this->assertSame(
+            'https://cloud.test/install/release.json',
+            $seen,
+            'the same manifest a fresh install downloads, so "latest" means what a new install gets'
+        );
+    }
+
     private function removeTree(string $dir): void
     {
         if (!is_dir($dir)) {

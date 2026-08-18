@@ -34,12 +34,29 @@ class GuardController extends AbstractApiController
 
         $boot = $this->bootstrap();
 
+        $cloudUrl = $this->cloudUrl();
+        $agentVersion = $boot->agentVersion();
+        // Only ask the cloud what the latest is when there is something
+        // installed to compare it against; a fresh site does not need it.
+        $latestAgent = $agentVersion === null ? null : $boot->latestAgentVersion($cloudUrl);
+
         return ApiResponse::create([
             'installed'     => $boot->isInstalled(),
             'endpoint_path' => $boot->endpointPath(),
             'endpoint'      => $this->absoluteEndpoint($boot->endpointPath()),
-            'cloud_url'     => $this->cloudUrl(),
+            'cloud_url'     => $cloudUrl,
+            // Where to go to actually manage any of this.
+            'manage_url'    => rtrim($cloudUrl, '/') . '/app/fleet',
             'signup_url'    => $this->signupUrl(),
+            'plugin_version' => (string) $this->config->get('plugins.guard-helper.__version', '')
+                ?: $this->pluginVersion(),
+            'agent_version' => $agentVersion,
+            // Null means we could not ask, NOT that the agent is current — the
+            // UI has to say "unknown" rather than imply everything is fine.
+            'agent_latest'  => $latestAgent,
+            'agent_outdated' => ($agentVersion !== null && $latestAgent !== null)
+                ? version_compare($agentVersion, $latestAgent, '<')
+                : null,
             'requirements'  => [
                 'sodium' => extension_loaded('sodium'),
                 'zip'    => extension_loaded('zip'),
@@ -116,6 +133,18 @@ class GuardController extends AbstractApiController
         $result['cloud_url'] = $this->cloudUrl();
 
         return ApiResponse::create($result);
+    }
+
+    /** This plugin's own version, from its blueprint. */
+    private function pluginVersion(): string
+    {
+        $blueprint = __DIR__ . '/../../blueprints.yaml';
+        if (!is_file($blueprint)) {
+            return '';
+        }
+        $src = (string) @file_get_contents($blueprint);
+
+        return preg_match('/^version:\\s*(\\S+)/m', $src, $m) ? trim($m[1], "'\"") : '';
     }
 
     private function bootstrap(): AgentBootstrap

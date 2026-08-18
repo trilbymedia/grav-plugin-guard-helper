@@ -88,6 +88,45 @@ final class AgentBootstrap
     }
 
     /**
+     * Which agent is unpacked here, read straight from its own source.
+     *
+     * Deliberately a file read rather than an autoload + class constant: this
+     * runs on every page render, and an agent too old or too broken to
+     * autoload should still report its version rather than take the screen
+     * down with it.
+     */
+    public function agentVersion(): ?string
+    {
+        $file = $this->guardDir . '/src/Version.php';
+        if (!is_file($file)) {
+            return null;
+        }
+        $src = (string) @file_get_contents($file);
+
+        return preg_match("/VERSION\\s*=\\s*'([^']+)'/", $src, $m) ? $m[1] : null;
+    }
+
+    /**
+     * The newest agent the cloud is offering, from the same manifest install()
+     * downloads — so "latest" here means exactly what a fresh install gets.
+     *
+     * Null on any failure. An unreachable cloud must not turn into a claim
+     * that the agent is current, nor into an error on a page whose job is to
+     * report health.
+     */
+    public function latestAgentVersion(string $cloudUrl): ?string
+    {
+        $json = ($this->fetcher)(rtrim($cloudUrl, '/') . '/install/release.json');
+        if ($json === null) {
+            return null;
+        }
+        $manifest = json_decode($json, true);
+        $version = is_array($manifest) ? ($manifest['version'] ?? null) : null;
+
+        return is_string($version) && $version !== '' ? $version : null;
+    }
+
+    /**
      * Has Guard Cloud actually reached this site, and how recently?
      *
      * This is the question the setup screen should lead with. Whether a

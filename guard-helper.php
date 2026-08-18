@@ -526,6 +526,55 @@ class GuardHelperPlugin extends Plugin
         return $days . ' day' . ($days === 1 ? '' : 's') . ' ago';
     }
 
+    /**
+     * What is running here, and whether the agent is behind.
+     *
+     * "Out of date" without a target is a worry rather than an instruction, so
+     * the newer version is named. A cloud we could not reach reports unknown
+     * rather than silently implying the agent is current.
+     */
+    private function versionLine(AgentBootstrap $boot, string $cloud): string
+    {
+        $e = static fn($v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        $parts = [];
+
+        $plugin = $this->pluginVersion();
+        if ($plugin !== '') {
+            $parts[] = '<span class="ver"><b>Plugin</b> ' . $e($plugin) . '</span>';
+        }
+
+        $agent = $boot->agentVersion();
+        if ($agent !== null) {
+            $line = '<span class="ver"><b>Agent</b> ' . $e($agent) . '</span>';
+            $latest = $boot->latestAgentVersion($cloud);
+            if ($latest === null) {
+                $line .= ' <span class="ver-unknown">latest unknown</span>';
+            } elseif (version_compare($agent, $latest, '<')) {
+                $line .= ' <span class="ver-new">update available: ' . $e($latest) . '</span>';
+            }
+            $parts[] = $line;
+        }
+
+        return $parts === [] ? '' : '<div class="vers">' . implode(' ', $parts) . '</div>';
+    }
+
+    /** Straight through to the fleet, so this page is not a dead end. */
+    private function manageLink(string $cloud): string
+    {
+        $url = rtrim($cloud, '/') . '/app/fleet';
+
+        return '<p class="manage"><a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8')
+            . '" target="_blank" rel="noopener">Manage this site in Guard Cloud &rarr;</a></p>';
+    }
+
+    /** This plugin's own version, from its blueprint. */
+    private function pluginVersion(): string
+    {
+        $src = (string) @file_get_contents(__DIR__ . '/blueprints.yaml');
+
+        return preg_match('/^version:\s*(\S+)/m', $src, $m) ? trim($m[1], "'\"") : '';
+    }
+
     /** Build the self-contained HTML page. */
     private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error): string
     {
@@ -533,19 +582,21 @@ class GuardHelperPlugin extends Plugin
         $endpoint = $this->absoluteUrl($result['endpoint_path'] ?? $boot->endpointPath());
         $signupUrl = $this->signupUrl();
 
-        if ($result !== null) {
+        if ($result !== null || $boot->isInstalled()) {
+            // One panel either way. The pairing code renders directly beneath
+            // the button that produced it rather than in a separate layout
+            // further up the page, where it reads as unrelated.
+            $pairOut = $result === null ? '' : '
+                <div class="pair-out">
+                    <p>Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within '
+                        . (int) ($result['ttl'] / 60) . ' minutes. Single-use; generate another if it expires.</p>
+                    <label>Pairing code</label>
+                    <div class="code">' . $e($result['code']) . '</div>
+                </div>';
+
             $body = '
-                <div class="ok">Guard Agent installed.</div>
-                <p>Enter these in <strong>Guard Cloud → Fleet → Add Site</strong> within ' . (int) ($result['ttl'] / 60) . ' minutes:</p>
-                <label>Pairing code</label>
-                <div class="code">' . $e($result['code']) . '</div>
-                <label>Agent endpoint</label>
-                <div class="code">' . $e($endpoint) . '</div>
-                <p class="muted">The code is single-use. If it expires, reload this page to start a new pairing window.</p>'
-                . $this->cronNotice($boot);
-        } elseif ($boot->isInstalled()) {
-            $body = '
-                <div class="ok">The Guard Agent is installed.</div>
+                <div class="ok">' . ($result !== null ? 'Guard Agent installed.' : 'The Guard Agent is installed.') . '</div>'
+                . $this->versionLine($boot, $cloud) . '
                 <label>Agent endpoint</label>
                 <div class="code">' . $e($endpoint) . '</div>
                 <p class="muted">To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it is single-use).</p>'
@@ -554,7 +605,9 @@ class GuardHelperPlugin extends Plugin
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
                     <input type="hidden" name="guard-action" value="repair">
                     <button type="submit">Show pairing code</button>
-                </form>';
+                </form>'
+                . $pairOut
+                . $this->manageLink($cloud);
         } else {
             $errHtml = $error !== null ? '<div class="err">' . $e($error) . '</div>' : '';
 
@@ -615,6 +668,15 @@ class GuardHelperPlugin extends Plugin
   .muted{color:var(--muted);font-size:13px}
   .ok{color:var(--ok);font-weight:600;margin-bottom:8px}
   .err{background:#fceeee;color:var(--err);border:1px solid #f5c2bd;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px}
+  .vers{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;font-size:12px;color:var(--muted)}
+  .vers b{text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-right:3px}
+  .ver-new{font-weight:600;color:#b45309;background:rgba(180,83,9,.12);padding:2px 8px;border-radius:99px}
+  .ver-unknown{font-style:italic}
+  .pair-out{margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:#fafafa}
+  .pair-out label{margin-top:10px}
+  .manage{margin:16px 0 0;font-size:13px}
+  .manage a{color:var(--primary);font-weight:600;text-decoration:none}
+  .manage a:hover{text-decoration:underline}
   .state{margin-top:18px;padding:12px 14px;border-radius:8px;border-left-width:4px;border-left-style:solid}
   .state > strong{display:block;font-size:14px;margin-bottom:2px}
   .state p{margin:0}
