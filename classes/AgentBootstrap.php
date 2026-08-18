@@ -88,7 +88,15 @@ final class AgentBootstrap
     }
 
     /**
-     * Which agent is unpacked here, read straight from its own source.
+     * Which agent is RUNNING here, read straight from its own source.
+     *
+     * Once a self-update has happened the flat tree is no longer the live
+     * agent: the update stages a verified release into releases/vX.Y.Z/ and
+     * points `current` at it, leaving the original src/ in place as the
+     * bootstrap. Reading src/Version.php alone therefore reports the version
+     * the site was INSTALLED with forever after — the one number this screen
+     * exists to answer, answered wrong. Resolve the pointer the same way
+     * boot.php does, and only fall back to the flat tree when there is none.
      *
      * Deliberately a file read rather than an autoload + class constant: this
      * runs on every page render, and an agent too old or too broken to
@@ -97,13 +105,51 @@ final class AgentBootstrap
      */
     public function agentVersion(): ?string
     {
-        $file = $this->guardDir . '/src/Version.php';
-        if (!is_file($file)) {
+        foreach ([$this->liveReleaseDir(), $this->guardDir] as $dir) {
+            if ($dir === null) {
+                continue;
+            }
+            $file = $dir . '/src/Version.php';
+            if (!is_file($file)) {
+                continue;
+            }
+            $src = (string) @file_get_contents($file);
+            if (preg_match("/VERSION\\s*=\\s*'([^']+)'/", $src, $m)) {
+                return $m[1];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The release directory `current` points at, or null when the agent has
+     * never self-updated (the flat tree is then the live release).
+     *
+     * The pointer is attacker-relevant — it is a writable file that decides
+     * which code the agent runs — so it gets the same containment boot.php
+     * applies: a home-relative path under releases/ and nothing else.
+     */
+    private function liveReleaseDir(): ?string
+    {
+        $link = $this->guardDir . '/current';
+        $pointer = null;
+        if (is_link($link)) {
+            $pointer = (string) @readlink($link);
+        } elseif (is_file($this->guardDir . '/current.pointer')) {
+            $pointer = trim((string) @file_get_contents($this->guardDir . '/current.pointer'));
+        }
+        if ($pointer === null || $pointer === '' || strpos($pointer, 'releases/') !== 0) {
             return null;
         }
-        $src = (string) @file_get_contents($file);
+        if (strpos($pointer, "\0") !== false || strpos($pointer, '\\') !== false
+            || in_array('..', explode('/', $pointer), true)) {
+            return null;
+        }
 
-        return preg_match("/VERSION\\s*=\\s*'([^']+)'/", $src, $m) ? $m[1] : null;
+        $dir = $this->guardDir . '/' . $pointer;
+
+        return is_dir($dir) ? $dir : null;
     }
 
     /**

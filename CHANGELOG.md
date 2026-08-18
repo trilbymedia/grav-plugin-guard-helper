@@ -1,3 +1,9 @@
+# v0.2.0-beta.4
+## 08/18/2026
+
+1. [](#bugfix)
+    * The Guard page reported the version the agent was first installed with, rather than the one actually running, on any site whose agent had updated itself
+
 # v0.2.0-beta.3
 ## 08/18/2026
 

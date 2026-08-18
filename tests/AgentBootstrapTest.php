@@ -149,6 +149,66 @@ final class AgentBootstrapTest extends TestCase
         $this->assertSame('0.1.34-dev', $boot->agentVersion());
     }
 
+    /** Write a release tree under _guard/releases and point `current` at it. */
+    private function stageRelease(string $version, string $pointer): void
+    {
+        $dir = $this->gravRoot . '/_guard/releases/v' . $version;
+        mkdir($dir . '/src', 0777, true);
+        file_put_contents(
+            $dir . '/src/Version.php',
+            "<?php\nfinal class Version { public const VERSION = '$version'; }\n"
+        );
+        file_put_contents($this->gravRoot . '/_guard/current.pointer', $pointer);
+    }
+
+    /** The flat tree, as a freshly installed agent leaves it. */
+    private function stageBootstrap(string $version = '0.1.34-dev'): void
+    {
+        mkdir($this->gravRoot . '/_guard/src', 0777, true);
+        file_put_contents(
+            $this->gravRoot . '/_guard/src/Version.php',
+            "<?php\nfinal class Version { public const VERSION = '$version'; }\n"
+        );
+    }
+
+    /**
+     * After a self-update the flat src/ is only the bootstrap — the live agent
+     * lives in releases/vX.Y.Z. Reading the flat tree reports the version the
+     * site was INSTALLED with forever after, which is the one number this
+     * screen exists to answer.
+     */
+    public function testReportsTheRunningReleaseNotTheBootstrap(): void
+    {
+        $this->stageBootstrap();
+        $this->stageRelease('1.0.0', 'releases/v1.0.0');
+
+        $this->assertSame('1.0.0', (new AgentBootstrap($this->gravRoot))->agentVersion());
+    }
+
+    /**
+     * The pointer is a writable file that decides which code runs, so it gets
+     * the same containment boot.php applies. One that escapes, or names a
+     * directory that is not there, falls back to the bootstrap rather than
+     * reading whatever it aimed at.
+     */
+    public function testARogueOrDanglingPointerFallsBackToTheFlatTree(): void
+    {
+        $this->stageBootstrap();
+        // Somewhere an attacker would like it to look, staged so that the only
+        // thing stopping the read is the containment check itself.
+        mkdir($this->gravRoot . '/evil/src', 0777, true);
+        file_put_contents(
+            $this->gravRoot . '/evil/src/Version.php',
+            "<?php\nfinal class Version { public const VERSION = '9.9.9'; }\n"
+        );
+
+        $boot = new AgentBootstrap($this->gravRoot);
+        foreach (['releases/../../evil', '/etc', '../evil', 'releases/v2.0.0', ''] as $pointer) {
+            file_put_contents($this->gravRoot . '/_guard/current.pointer', $pointer);
+            $this->assertSame('0.1.34-dev', $boot->agentVersion(), "pointer: $pointer");
+        }
+    }
+
     /**
      * A cloud we cannot reach must report "unknown", never "current" — the
      * whole point of the badge is to be trusted when it says nothing is wrong.
