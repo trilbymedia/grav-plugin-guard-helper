@@ -63,14 +63,8 @@ final class Constraint
             return false;
         }
 
-        return match ($op) {
-            '<' => version_compare($version, $target, '<'),
-            '<=' => version_compare($version, $target, '<='),
-            '>' => version_compare($version, $target, '>'),
-            '>=' => version_compare($version, $target, '>='),
-            '!=' => version_compare($version, $target, '!='),
-            default => version_compare($version, $target, '=='),
-        };
+        // The operator regex above admits only these; '=' means equality.
+        return version_compare($version, $target, $op === '=' ? '==' : $op);
     }
 
     /** Strip a leading v and surrounding whitespace; '' if nothing usable. */

@@ -84,7 +84,7 @@ final class ShieldRules
 
         try {
             return sodium_crypto_sign_verify_detached($signature, $payload, $publicKey);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
             return false;
         }
     }

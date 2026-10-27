@@ -67,7 +67,7 @@ class GuardHelperPage extends HTMLElement {
 			? await window.__GRAV_DIALOGS.confirm({
 				title: 'Set up Guard Agent',
 				message: 'Download, verify, and install the Guard Agent into this site, then start pairing? '
-					+ 'A signed release is fetched from your Guard Cloud URL and verified before anything is written.',
+					+ 'A signed release is fetched from your Guard Cloud URL, and its signature and every file are verified against the Guard release key before anything is written.',
 				confirmLabel: 'Set up',
 			})
 			: true;
@@ -309,7 +309,7 @@ class GuardHelperPage extends HTMLElement {
 
 		return `<div class="card">
 			<div class="status off"><span class="dot"></span> Not set up</div>
-			<p class="muted">This installs the standalone Guard Agent into <code>_guard/</code> and starts pairing — no shell needed. A signed release is downloaded from <code>${esc(cloud)}</code> and verified before anything is written. Afterwards you'll be shown a scheduled task to add, if your host supports one.</p>
+			<p class="muted">This installs the standalone Guard Agent into <code>_guard/</code> and starts pairing — no shell needed. A signed release is downloaded from <code>${esc(cloud)}</code>, and its signature and every file are verified against the Guard release key before anything is written. Afterwards you'll be shown a scheduled task to add, if your host supports one.</p>
 			${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
 			${warn}
 			<button id="setup-btn" class="btn" ${s.busy || reqBad ? 'disabled' : ''}>${s.busy ? 'Setting up…' : 'Set up Guard Agent'}</button>

@@ -81,7 +81,9 @@ class GuardController extends AbstractApiController
         $boot = $this->bootstrap();
 
         try {
-            $result = $boot->install($this->cloudUrl());
+            // The site's own base URL, as Grav sees it, is pinned for the
+            // agent's self-calls so no signed command can redirect them.
+            $result = $boot->install($this->cloudUrl(), $this->siteRoot());
         } catch (BootstrapException $e) {
             // Operational failure (unreachable cloud, tampered release, already
             // installed, non-writable root) — a 422 with the human message the
@@ -107,7 +109,7 @@ class GuardController extends AbstractApiController
         $boot = $this->bootstrap();
 
         try {
-            $result = $boot->repair();
+            $result = $boot->repair($this->siteRoot());
         } catch (BootstrapException $e) {
             throw new ValidationException($e->getMessage());
         } catch (\Throwable $e) {
@@ -170,9 +172,12 @@ class GuardController extends AbstractApiController
 
     private function absoluteEndpoint(string $path): string
     {
-        $root = rtrim((string) $this->grav['uri']->rootUrl(true), '/');
+        return $this->siteRoot() . $path;
+    }
 
-        return $root . $path;
+    private function siteRoot(): string
+    {
+        return rtrim((string) $this->grav['uri']->rootUrl(true), '/');
     }
 
     /**

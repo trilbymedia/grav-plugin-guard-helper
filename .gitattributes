@@ -1,0 +1,7 @@
+# Development-only files stay out of `git archive`, which is what GPM ships.
+/tests              export-ignore
+/phpunit.xml        export-ignore
+/.phpunit.cache     export-ignore
+/.github            export-ignore
+/.gitignore         export-ignore
+/.gitattributes     export-ignore

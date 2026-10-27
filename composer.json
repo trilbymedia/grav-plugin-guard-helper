@@ -1,7 +1,7 @@
 {
     "name": "trilbymedia/grav-plugin-guard-helper",
     "type": "grav-plugin",
-    "description": "Optional companion plugin for Grav Guard — in-admin checker, agent bootstrap, SSO, Shield hooks",
+    "description": "Optional companion plugin for Grav Guard — in-admin checker, agent bootstrap, SSO",
     "license": "MIT",
     "require": {
         "php": ">=8.1"

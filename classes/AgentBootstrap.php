@@ -13,11 +13,17 @@ use ZipArchive;
  * what gi.php does, but runs inside Grav and pairs IN-PROCESS so it needs no
  * proc_open / crontab:
  *
- *   1. fetch <cloud>/install/release.json and the agent zip
- *   2. verify the zip's sha256 (the installer's integrity check) — refuse on mismatch
- *   3. unpack into <grav-root>/_guard/  (the only reliably-writable spot)
- *   4. generate the keypair + pin grav_root/cloud_url + start a pairing window,
- *      driving the agent's own KeyStorage/PairingManager classes directly
+ *   1. fetch the signed release descriptor (<cloud>/agent/release/manifest —
+ *      the one the agent's self-update reads) and verify its Ed25519
+ *      signature against the release key pinned in ReleaseVerifier
+ *   2. download the zip from the same cloud and check it against the signed
+ *      manifest's sha256 — refuse on any mismatch
+ *   3. unpack into a staging dir, verify every file against the signed
+ *      manifest, and only then move it into <grav-root>/_guard/ (the only
+ *      reliably-writable spot)
+ *   4. generate the keypair + pin grav_root/cloud_url/site_url + start a
+ *      pairing window, driving the agent's own KeyStorage/PairingManager
+ *      classes directly
  *
  * The secrets land PHP-guarded (KeyStorage / DirGuard handle that). Returns the
  * single-use pairing code for the user to enter in Guard Cloud → Add Site.
@@ -36,12 +42,20 @@ final class AgentBootstrap
     private string $guardDir;
     /** @var callable(string):?string GET a URL → body, or null on failure */
     private $fetcher;
+    /** Raw Ed25519 key releases must be signed with. */
+    private string $releaseKey;
 
-    public function __construct(string $gravRoot, ?callable $fetcher = null)
+    /**
+     * @param string|null $releasePublicKey raw key; only tests pass one (they
+     *   cannot sign with the real release key). Production always verifies
+     *   against ReleaseVerifier's pinned key.
+     */
+    public function __construct(string $gravRoot, ?callable $fetcher = null, ?string $releasePublicKey = null)
     {
         $this->gravRoot = rtrim($gravRoot, '/');
         $this->guardDir = $this->gravRoot . '/_guard';
         $this->fetcher = $fetcher ?? [self::class, 'httpGet'];
+        $this->releaseKey = $releasePublicKey ?? ReleaseVerifier::pinnedKey();
     }
 
     /** The agent is installed when its entry point + (guarded) key exist. */
@@ -153,8 +167,9 @@ final class AgentBootstrap
     }
 
     /**
-     * The newest agent the cloud is offering, from the same manifest install()
-     * downloads — so "latest" here means exactly what a fresh install gets.
+     * The newest agent the cloud is offering, from the same signed descriptor
+     * install() verifies — so "latest" here means exactly what a fresh install
+     * gets, and only a version the release key actually signed.
      *
      * Null on any failure. An unreachable cloud must not turn into a claim
      * that the agent is current, nor into an error on a page whose job is to
@@ -162,14 +177,36 @@ final class AgentBootstrap
      */
     public function latestAgentVersion(string $cloudUrl): ?string
     {
-        $json = ($this->fetcher)(rtrim($cloudUrl, '/') . '/install/release.json');
+        $descriptor = $this->descriptor(rtrim($cloudUrl, '/'));
+        if ($descriptor === null
+            || ReleaseVerifier::problem($descriptor['manifest'], $descriptor['signature'], $this->releaseKey) !== null) {
+            return null;
+        }
+
+        return (string) $descriptor['manifest']['version'];
+    }
+
+    /**
+     * The signed release descriptor: {manifest, signature, zip_url}.
+     *
+     * @return array{manifest:mixed, signature:mixed, zip_url:mixed}|null
+     */
+    private function descriptor(string $cloud): ?array
+    {
+        try {
+            $json = ($this->fetcher)($cloud . '/agent/release/manifest');
+        } catch (BootstrapException $e) {
+            return null;
+        }
         if ($json === null) {
             return null;
         }
-        $manifest = json_decode($json, true);
-        $version = is_array($manifest) ? ($manifest['version'] ?? null) : null;
+        $descriptor = json_decode($json, true);
+        if (!is_array($descriptor) || !isset($descriptor['manifest'], $descriptor['signature'], $descriptor['zip_url'])) {
+            return null;
+        }
 
-        return is_string($version) && $version !== '' ? $version : null;
+        return $descriptor;
     }
 
     /**
@@ -253,9 +290,12 @@ final class AgentBootstrap
      * Download, verify, unpack, and pair. Returns:
      *   ['code' => '…', 'key_id' => '…', 'endpoint_path' => '/_guard/agent.php', 'ttl' => 900]
      *
+     * @param string|null $siteUrl the site's own base URL as Grav sees it,
+     *   pinned in the agent's config so no signed command can point the
+     *   agent's self-calls (health probe, scheduler webhook) anywhere else
      * @return array<string,mixed>
      */
-    public function install(string $cloudUrl): array
+    public function install(string $cloudUrl, ?string $siteUrl = null): array
     {
         if (!extension_loaded('sodium')) {
             throw new BootstrapException('PHP ext-sodium is required (the agent fails closed without it).');
@@ -271,36 +311,64 @@ final class AgentBootstrap
         }
 
         $cloud = rtrim($cloudUrl, '/');
-        $this->unpack($this->download($cloud));
+        [$zip, $manifest] = $this->download($cloud);
+        $this->unpack($zip, $manifest);
 
-        return $this->pair($cloud);
+        return $this->pair($cloud, $siteUrl);
     }
 
-    /** Fetch + verify the release zip; returns its bytes. */
-    private function download(string $cloud): string
+    /**
+     * Fetch the signed descriptor, verify it, then fetch the zip and check it
+     * against the signed hash. Returns [zip bytes, verified manifest].
+     *
+     * @return array{0:string, 1:array<string,mixed>}
+     */
+    private function download(string $cloud): array
     {
-        $manifestJson = ($this->fetcher)($cloud . '/install/release.json');
-        if ($manifestJson === null) {
+        $json = ($this->fetcher)($cloud . '/agent/release/manifest');
+        if ($json === null) {
             throw new BootstrapException("Couldn't reach the release service at $cloud.");
         }
-        $manifest = json_decode($manifestJson, true);
-        if (!is_array($manifest) || !isset($manifest['zip_url'], $manifest['zip_sha256'])) {
+        $descriptor = json_decode($json, true);
+        if (!is_array($descriptor) || !isset($descriptor['manifest'], $descriptor['signature'], $descriptor['zip_url'])) {
             throw new BootstrapException('The release manifest is malformed.');
         }
+        $problem = ReleaseVerifier::problem($descriptor['manifest'], $descriptor['signature'], $this->releaseKey);
+        if ($problem !== null) {
+            throw new BootstrapException($problem);
+        }
+        $manifest = $descriptor['manifest'];
 
-        $zip = ($this->fetcher)((string) $manifest['zip_url']);
+        // The zip comes from the cloud that served the descriptor, nowhere else.
+        $zipUrl = (string) $descriptor['zip_url'];
+        if (self::origin($zipUrl) !== self::origin($cloud)) {
+            throw new BootstrapException("The agent release is not served from $cloud — refusing to install it.");
+        }
+        $zip = ($this->fetcher)($zipUrl);
         if ($zip === null) {
             throw new BootstrapException('The agent download failed.');
         }
-        if (!hash_equals(strtolower((string) $manifest['zip_sha256']), hash('sha256', $zip))) {
+        if (!hash_equals((string) $manifest['zip_sha256'], hash('sha256', $zip))) {
             throw new BootstrapException('Agent sha256 mismatch — refusing to install a tampered release.');
         }
 
-        return $zip;
+        return [$zip, $manifest];
     }
 
-    /** Unpack the release into _guard/, flattening the single top-level dir. */
-    private function unpack(string $zipBytes): void
+    private static function origin(string $url): string
+    {
+        $p = (array) parse_url($url);
+
+        return strtolower(($p['scheme'] ?? '') . '://' . ($p['host'] ?? '') . (isset($p['port']) ? ':' . $p['port'] : ''));
+    }
+
+    /**
+     * Unpack into a staging dir, verify every file against the signed
+     * manifest, then move the release into _guard/.
+     *
+     * @param array<string,mixed> $manifest verified
+     */
+    private function unpack(string $zipBytes, array $manifest): void
     {
         // install() only runs when the agent isn't installed, so anything in
         // _guard is leftover from a failed attempt. Start clean — otherwise a
@@ -310,31 +378,42 @@ final class AgentBootstrap
         if (is_dir($this->guardDir)) {
             self::rmrf($this->guardDir);
         }
-        if (!mkdir($this->guardDir, 0755, true) && !is_dir($this->guardDir)) {
-            throw new BootstrapException('Could not create the _guard directory.');
-        }
-        $tmp = $this->guardDir . '/.release-' . bin2hex(random_bytes(4)) . '.zip';
-        if (file_put_contents($tmp, $zipBytes) === false) {
+        $staging = $this->gravRoot . '/.guard-install-' . bin2hex(random_bytes(4));
+        $tmp = $staging . '.zip';
+        if (!mkdir($staging, 0700) || file_put_contents($tmp, $zipBytes) === false) {
+            @unlink($tmp);
             throw new BootstrapException('Could not write the release archive.');
         }
 
         $archive = new ZipArchive();
-        if ($archive->open($tmp) !== true || !$archive->extractTo($this->guardDir)) {
+        if ($archive->open($tmp) !== true || !$archive->extractTo($staging)) {
             @unlink($tmp);
+            self::rmrf($staging);
             throw new BootstrapException('Could not unpack the agent release.');
         }
         $archive->close();
         @unlink($tmp);
 
-        // GPM-style zips have a single top-level dir; flatten it into _guard/.
-        $entries = array_values(array_diff(scandir($this->guardDir) ?: [], ['.', '..']));
-        if (count($entries) === 1 && is_dir($this->guardDir . '/' . $entries[0])) {
-            $inner = $this->guardDir . '/' . $entries[0];
-            foreach (array_diff(scandir($inner) ?: [], ['.', '..']) as $item) {
-                rename("$inner/$item", $this->guardDir . '/' . $item);
-            }
-            rmdir($inner);
+        // Release zips have a single top-level dir; that dir is the release.
+        $entries = array_values(array_diff(scandir($staging) ?: [], ['.', '..']));
+        $root = (count($entries) === 1 && is_dir($staging . '/' . $entries[0])) ? $staging . '/' . $entries[0] : $staging;
+
+        // Every file, against the signed manifest: modified, missing and extra
+        // files all fail, exactly as the agent's self-update checks.
+        $expected = $manifest['files'];
+        ksort($expected, SORT_STRING);
+        if (ReleaseVerifier::treeHashes($root) !== $expected) {
+            self::rmrf($staging);
+            throw new BootstrapException('The unpacked release does not match its signed manifest — refusing to install it.');
         }
+        if (!rename($root, $this->guardDir)) {
+            self::rmrf($staging);
+            throw new BootstrapException('Could not create the _guard directory.');
+        }
+        if (is_dir($staging)) {
+            self::rmrf($staging);
+        }
+        @chmod($this->guardDir, 0755);
 
         // ZipArchive::extractTo does not carry unix permission bits across, so
         // the bin/ helpers land non-executable and `_guard/bin/pair` fails as a
@@ -368,7 +447,7 @@ final class AgentBootstrap
      *
      * @return array<string,mixed>
      */
-    private function pair(string $cloud): array
+    private function pair(string $cloud, ?string $siteUrl = null): array
     {
         [$keyClass, $guardClass, $stateClass, $pairClass] = $this->loadAgentClasses();
 
@@ -387,6 +466,10 @@ final class AgentBootstrap
             'grav_root' => $this->gravRoot,
             'db' => 'agent-' . bin2hex(random_bytes(8)) . '.db',
         ];
+        $site = self::siteUrl($siteUrl);
+        if ($site !== null) {
+            $config['site_url'] = $site;
+        }
         file_put_contents(
             $dataDir . '/config.php',
             "<?php /* Guard Agent config — pinned host-side; do not expose. */ return "
@@ -397,14 +480,41 @@ final class AgentBootstrap
     }
 
     /**
+     * A base URL worth pinning: absolute http(s), no credentials, query or
+     * fragment, no trailing slash. Null otherwise. Guard Cloud never sets
+     * this URL; without it the agent's scheduler webhook fallback stays off.
+     */
+    private static function siteUrl(?string $url): ?string
+    {
+        if ($url === null) {
+            return null;
+        }
+        $p = parse_url(trim($url));
+        if (!is_array($p) || !isset($p['scheme'], $p['host'])
+            || !in_array(strtolower($p['scheme']), ['http', 'https'], true)
+            || isset($p['user']) || isset($p['pass']) || isset($p['query']) || isset($p['fragment'])) {
+            return null;
+        }
+
+        return rtrim(trim($url), '/');
+    }
+
+    /**
      * Start a FRESH pairing window on an already-installed agent, reusing its
      * existing key + config. The original code is single-use, so this is how a
      * super-admin gets a new one to enter in Guard Cloud (e.g. they navigated
      * away before pairing, or it expired).
      *
+     * It is also how an agent installed before 1.0.4 gets its site URL: those
+     * agents have none in their config, and their bin/pair predates
+     * --site-url. Opening a pairing window does not touch an existing
+     * pairing, so on a paired site the code can simply be ignored.
+     *
+     * @param string|null $siteUrl pinned into the config when it has none yet
+     *   (agents installed before the Helper recorded it)
      * @return array<string,mixed>
      */
-    public function repair(): array
+    public function repair(?string $siteUrl = null): array
     {
         if (!$this->isInstalled()) {
             throw new BootstrapException('The Guard Agent is not installed yet — set it up first.');
@@ -420,6 +530,15 @@ final class AgentBootstrap
         $config = require $configFile;
         if (!is_array($config) || !isset($config['db'])) {
             throw new BootstrapException('The agent configuration is unreadable — re-run setup.');
+        }
+        $site = self::siteUrl($siteUrl);
+        if (!isset($config['site_url']) && $site !== null) {
+            $config['site_url'] = $site;
+            file_put_contents(
+                $configFile,
+                "<?php /* Guard Agent config — pinned host-side; do not expose. */ return "
+                    . var_export($config, true) . ";\n"
+            );
         }
 
         $agentKey = (new $keyClass($this->guardDir . '/keys/agent.key.php'))->load();
@@ -471,26 +590,67 @@ final class AgentBootstrap
         ];
     }
 
-    /** Default fetcher: a plain GET. Returns the body or null on any failure. */
+    /**
+     * Default fetcher: a plain HTTPS GET. Returns the body, or null on any
+     * failure.
+     *
+     * Redirects are never followed, on either path. The descriptor and the
+     * zip both come from the configured cloud, and a redirect from it — to
+     * http://127.0.0.1:…, say — would make this site request whatever the
+     * cloud names, inside its own network, before any signature has been
+     * checked. A 3xx is a failure with its own message, so a mistyped cloud
+     * URL (http, or www vs apex) is easy to spot.
+     *
+     * @throws BootstrapException when the cloud answers with a redirect
+     */
     private static function httpGet(string $url): ?string
     {
+        if (strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
+            return null;
+        }
+
         if (extension_loaded('curl')) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_FOLLOWLOCATION => false,
+                CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+                CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
                 CURLOPT_TIMEOUT => 60,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_SSL_VERIFYHOST => 2,
             ]);
             $body = curl_exec($ch);
-            $ok = $body !== false && (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE) < 400;
+            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            self::refuseRedirect($url, $status);
 
-            return $ok ? (string) $body : null;
+            return ($body !== false && $status >= 200 && $status < 300) ? (string) $body : null;
         }
 
-        $body = @file_get_contents($url);
+        $ctx = stream_context_create([
+            'http' => ['follow_location' => 0, 'timeout' => 60, 'ignore_errors' => true],
+            'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+        ]);
+        $body = @file_get_contents($url, false, $ctx);
+        $status = 0;
+        foreach ($http_response_header ?? [] as $header) {
+            if (preg_match('#^HTTP/\S+\s+(\d+)#', $header, $m)) {
+                $status = (int) $m[1];
+            }
+        }
+        self::refuseRedirect($url, $status);
 
-        return $body === false ? null : $body;
+        return ($body !== false && $status >= 200 && $status < 300) ? $body : null;
+    }
+
+    /** @throws BootstrapException on a 3xx */
+    private static function refuseRedirect(string $url, int $status): void
+    {
+        if ($status >= 300 && $status < 400) {
+            throw new BootstrapException(
+                "Guard Cloud answered $url with a redirect (HTTP $status). The installer does not follow redirects — "
+                . 'check that the Guard Cloud URL in the plugin settings is exact (https, and the right host).'
+            );
+        }
     }
 }

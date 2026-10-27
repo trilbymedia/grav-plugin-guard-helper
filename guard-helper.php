@@ -33,6 +33,15 @@ class GuardHelperPlugin extends Plugin
     private const NONCE_ACTION = 'guard-helper-setup';
     private const SLUG = 'guard-helper';
 
+    /**
+     * Guard Shield is parked: the code stays, but it is off and not offered.
+     * It has no settings in the blueprint or the admin pages, and while this
+     * is true it never runs and never fetches a rule bundle, whatever
+     * `shield.enabled` says — so a value left over from testing cannot turn it
+     * back on. Flip this (and restore the settings) to bring it back.
+     */
+    private const SHIELD_PARKED = true;
+
     public static function getSubscribedEvents(): array
     {
         return [
@@ -93,11 +102,12 @@ class GuardHelperPlugin extends Plugin
     /**
      * Guard Shield request filter. Fetches the signature-verified rule bundle
      * (cached) and blocks or logs the request if a rule matches. Wrapped so a
-     * Shield error can never take the site down — it fails open.
+     * Shield error can never take the site down — it fails open. Parked: see
+     * SHIELD_PARKED.
      */
     private function evaluateShield(): void
     {
-        if (\PHP_SAPI === 'cli' || !$this->config->get('plugins.guard-helper.shield.enabled', false)) {
+        if (self::SHIELD_PARKED || \PHP_SAPI === 'cli' || !$this->config->get('plugins.guard-helper.shield.enabled', false)) {
             return;
         }
         $publicKey = (string) $this->config->get('plugins.guard-helper.shield.public_key', '');
@@ -134,7 +144,7 @@ class GuardHelperPlugin extends Plugin
             header('X-Guard-Shield: blocked');
             echo 'Forbidden';
             exit;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
             // Shield must never break the site on its own failure — fail open.
         }
     }
@@ -316,7 +326,7 @@ class GuardHelperPlugin extends Plugin
                     'action'         => ['label' => 'Review', 'url' => rtrim($this->cloudUrl(), '/')],
                 ];
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
             // A failed check must never block the dashboard.
         }
 
@@ -347,9 +357,11 @@ class GuardHelperPlugin extends Plugin
                 try {
                     // `repair` starts a fresh pairing window on an installed
                     // agent; otherwise this is a first-time install.
+                    // The site's base URL is pinned for the agent's self-calls.
+                    $site = $this->absoluteUrl('');
                     $result = (($_POST['guard-action'] ?? '') === 'repair')
-                        ? $boot->repair()
-                        : $boot->install($cloud);
+                        ? $boot->repair($site)
+                        : $boot->install($cloud, $site);
                 } catch (BootstrapException $e) {
                     $error = $e->getMessage();
                 } catch (\Throwable $e) {
@@ -628,7 +640,8 @@ class GuardHelperPlugin extends Plugin
             $body = $errHtml . '
                 <p>This installs the standalone Guard Agent into <code>' . $e(basename(GRAV_ROOT)) . '/_guard</code>
                 and starts pairing — no shell needed. It downloads a signed release from
-                <code>' . $e($cloud) . '</code> and verifies it before installing.</p>'
+                <code>' . $e($cloud) . '</code> and verifies its signature, and every file in it,
+                against the Guard release key before installing.</p>'
                 . $warn . '
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">

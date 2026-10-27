@@ -122,4 +122,20 @@ final class ShieldTest extends TestCase
         $this->assertFalse(ShieldRules::verify('{}', 'not-base64!!', $pk));
         $this->assertFalse(ShieldRules::verify('{}', base64_encode('tooshort'), $pk));
     }
+
+    /**
+     * Shield is parked: kept in code, off, not offered. Nothing in the settings
+     * UI may switch it on, and the plugin's parking switch must be set — it
+     * keeps a leftover `shield.enabled: true` from fetching any rules.
+     */
+    public function testShieldIsParkedAndNotOffered(): void
+    {
+        $root = dirname(__DIR__);
+        foreach (['blueprints.yaml', 'admin-next/pages/guard-helper.js', 'admin-next/widgets/guard-helper.js'] as $file) {
+            $text = (string) file_get_contents("$root/$file");
+            $this->assertDoesNotMatchRegularExpression('/shield[._\\-](enabled|public_key)|shield:\s*$/mi', $text, "$file must not offer Shield settings");
+        }
+        $this->assertMatchesRegularExpression('/SHIELD_PARKED = true;/', (string) file_get_contents("$root/guard-helper.php"));
+        $this->assertMatchesRegularExpression("/^shield:\\n  enabled: false/m", (string) file_get_contents("$root/guard-helper.yaml"));
+    }
 }

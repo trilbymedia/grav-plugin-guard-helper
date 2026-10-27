@@ -10,7 +10,7 @@ the browser**. A super-admin opens the setup route (default `/_guard-setup`) and
 clicks one button; the plugin:
 
 1. downloads the signed agent release from your Guard Cloud URL,
-2. verifies its sha256 (refusing a tampered release),
+2. verifies its Ed25519 signature against the Guard release key built into this plugin, then the zip and every file in it against the signed manifest (refusing anything the release key did not sign — Guard Cloud serves the release but cannot sign it),
 3. unpacks it into `<grav-root>/_guard` (the reliably-writable spot on
    shared/managed hosts), and
 4. generates the per-site key + starts a pairing window **in-process** — no
@@ -48,7 +48,7 @@ admin-next's `TopBanner`).
 
 - Free in-admin health and vulnerability checker (Admin2 panel)
 - One-click SSO login token consumption (off by default, scoped-key gated)
-- Guard Shield request filtering (virtual patching)
+- Guard Shield request filtering (virtual patching) — parked: the code is kept, but it is off, has no settings, and fetches nothing
 - Save-event pings for real-time backup
 
 The Guard **control channel never depends on this plugin** — fleet

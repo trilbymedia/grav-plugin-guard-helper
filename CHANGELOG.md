@@ -1,3 +1,18 @@
+# v0.2.0-beta.5
+## 10/27/2026
+
+1. [](#improved)
+    * Browser setup now verifies the agent release against the Guard release key built into the plugin before anything is unpacked: the signed manifest's Ed25519 signature, the zip's hash, and every file in it. Guard Cloud serves the release but cannot sign it, so a compromised or impersonated cloud can no longer hand a new install its own code
+    * The release is unpacked into a staging folder and only moved into `_guard/` once every file checks out, so a refused release leaves nothing behind
+    * Setup records the site's own address in the agent's config, so the agent's calls to its own site (the post-update health check and the scheduler webhook) can never be pointed somewhere else by a command. On an agent installed before 1.0.4, clicking **Show pairing code** adds it; an existing pairing is not affected
+    * Setup refuses an agent release older than 1.0.4, even a genuinely signed one, since older releases carry holes a hostile cloud could use
+    * Release downloads no longer follow redirects and only speak HTTPS; a redirect from Guard Cloud now fails with a message naming it
+    * The newest agent version shown on the Guard page is read from the same signed release a fresh install verifies, and only counts if the release key signed it
+    * Guard Shield is parked: it stays in the code but is off, has no settings, and fetches no rules
+    * Plugin code now parses on PHP 7.4
+2. [](#bugfix)
+    * Development files (tests, PHPUnit config, CI workflows) are no longer included in the release package
+
 # v0.2.0-beta.4
 ## 08/18/2026
 

@@ -12,10 +12,11 @@ setup_route: '/_guard-setup'
 # the setup panel — especially after install, when the pairing code is ready.
 signup_url: 'https://gravguard.com'
 
-# Guard Shield — endpoint-WAF virtual patching. Rules are fetched from the cloud
-# as a signed bundle and applied ONLY if the Ed25519 signature verifies against
-# public_key, so a compromised CDN can't inject a rule. Off by default; set the
-# public key (from bin/shield-keygen.php) and enable to turn it on.
+# Guard Shield — endpoint-WAF virtual patching. PARKED: kept in code but off and
+# not offered; the plugin ignores these settings and fetches no rules while it is
+# parked (GuardHelperPlugin::SHIELD_PARKED). When it returns, rules are fetched
+# from the cloud as a signed bundle and applied ONLY if the Ed25519 signature
+# verifies against public_key, so a compromised CDN can't inject a rule.
 shield:
   enabled: false
   public_key: ''
