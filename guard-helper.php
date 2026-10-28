@@ -8,6 +8,7 @@ use Grav\Common\Plugin;
 use Grav\Common\Utils;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use RocketTheme\Toolbox\Event\Event;
 
 /**
@@ -24,6 +25,11 @@ use RocketTheme\Toolbox\Event\Event;
  *     all backed by the API plugin (see GuardController).
  *   • Admin classic — an admin-menu entry, plus a self-contained frontend
  *     fallback route (works even when an admin SPA isn't installed).
+ *
+ * It also sets up Grav's scheduler webhook when it installs or re-pairs the
+ * agent, and answers that webhook's route on sites without the
+ * scheduler-webhook plugin, so Guard Cloud can run the site's scheduled jobs
+ * on hosts where the agent cannot start Grav itself (see SchedulerWebhook).
  *
  * The Guard control channel NEVER depends on this plugin; every fleet feature
  * degrades gracefully without it.
@@ -87,6 +93,19 @@ class GuardHelperPlugin extends Plugin
         // Guard Shield runs first — an endpoint-WAF pass that may block the
         // request before any further work. Cheap (cached rules) and fail-open.
         $this->evaluateShield();
+
+        // Grav's scheduler webhook, for the agent on spawn-less hosts. Only
+        // when the scheduler-webhook plugin is not there to answer it, and
+        // only while Guard Helper is allowed to manage the webhook.
+        if ($this->grav['uri']->path() === SchedulerWebhook::ROUTE && !$this->isAdmin()
+            && $this->webhookManaged()
+            && !SchedulerWebhook::officialPluginActive($this->grav)) {
+            // Same point the scheduler-webhook plugin answers at: every
+            // plugin has registered its jobs by then.
+            $this->enable(['onPagesInitialized' => ['handleSchedulerWebhook', 0]]);
+
+            return;
+        }
 
         // The self-contained setup page. It serves BOTH the frontend fallback
         // route and the classic admin-menu route (handleSetup renders its own
@@ -226,6 +245,7 @@ class GuardHelperPlugin extends Plugin
         $routes->get('/' . self::SLUG . '/status', [$controller, 'status']);
         $routes->post('/' . self::SLUG . '/setup', [$controller, 'setup']);
         $routes->post('/' . self::SLUG . '/repair', [$controller, 'repair']);
+        $routes->post('/' . self::SLUG . '/webhook', [$controller, 'webhookEnable']);
         $routes->get('/' . self::SLUG . '/security', [$controller, 'security']);
     }
 
@@ -333,6 +353,95 @@ class GuardHelperPlugin extends Plugin
         $event['notifications'] = $notifications;
     }
 
+    // ── Scheduler webhook ──────────────────────────────────────────────────
+
+    /**
+     * Answer Grav's scheduler webhook, as the scheduler-webhook plugin would,
+     * for the agent's fallback on hosts where it cannot start Grav.
+     *
+     * Deliberately narrower than that plugin: POST only, the token only in
+     * the X-Webhook-Token header (never a query string), a token of at least
+     * SchedulerWebhook::MIN_TOKEN_LENGTH characters, and no `job` or `mode`:
+     * every call runs the jobs that are due, which is what the host's cron
+     * would have run. Fails closed on anything missing.
+     */
+    public function handleSchedulerWebhook(): void
+    {
+        $webhook = (array) $this->config->get('scheduler.modern.webhook', []);
+        if (empty($webhook['enabled'])) {
+            $this->sendJson(403, ['error' => 'Webhook triggers are disabled']);
+        }
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            header('Allow: POST');
+            $this->sendJson(405, ['error' => 'Method not allowed']);
+        }
+
+        $configured = $webhook['token'] ?? null;
+        if (!is_string($configured) || strlen($configured) < SchedulerWebhook::MIN_TOKEN_LENGTH) {
+            $this->sendJson(403, ['error' => 'Webhook token is not configured']);
+        }
+        $provided = $_SERVER['HTTP_X_WEBHOOK_TOKEN'] ?? null;
+        if (!is_string($provided) || !hash_equals($configured, trim($provided))) {
+            $this->sendJson(401, ['error' => 'Invalid authorization token']);
+        }
+
+        $scheduler = $this->grav['scheduler'];
+        if (!is_object($scheduler) || !method_exists($scheduler, 'processWebhookTrigger')) {
+            $this->sendJson(501, ['error' => 'This version of Grav cannot run its scheduler from a webhook']);
+        }
+
+        try {
+            $result = (array) $scheduler->processWebhookTrigger($configured);
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('Guard Helper scheduler webhook failed: ' . $e->getMessage(), ['exception' => $e]);
+            $this->sendJson(500, ['success' => false, 'error' => 'Scheduler execution failed']);
+        }
+
+        $this->sendJson(!empty($result['success']) ? 200 : 400, $result);
+    }
+
+    /** @param array<string,mixed> $data */
+    private function sendJson(int $status, array $data): void
+    {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        http_response_code($status);
+        header('Content-Type: application/json');
+        header('Cache-Control: no-store');
+        echo json_encode($data);
+        exit;
+    }
+
+    /** Guard Helper's `scheduler_webhook` setting: may it switch on and answer the webhook? */
+    private function webhookManaged(): bool
+    {
+        return (bool) $this->config->get('plugins.guard-helper.scheduler_webhook', true);
+    }
+
+    private function webhook(): SchedulerWebhook
+    {
+        return SchedulerWebhook::forGrav($this->grav, $this->webhookManaged());
+    }
+
+    /**
+     * Switch the webhook on, reporting rather than throwing: a pairing code
+     * that was just generated must still reach the screen.
+     *
+     * @return array<string,mixed>
+     */
+    private function ensureWebhook(): array
+    {
+        try {
+            return $this->webhook()->ensure();
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('Guard Helper could not set up the scheduler webhook: ' . $e->getMessage(), ['exception' => $e]);
+
+            return ['state' => 'error', 'ready' => false, 'changed' => false,
+                'message' => "Couldn't set up Grav's scheduler webhook: " . $e->getMessage()];
+        }
+    }
+
     // ── Classic / fallback setup page ──────────────────────────────────────
 
     /** Serve the setup page (GET = status/form, POST = run the bootstrap). */
@@ -350,18 +459,24 @@ class GuardHelperPlugin extends Plugin
 
         $result = null;
         $error = null;
+        $webhook = null;
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+            $action = (string) ($_POST['guard-action'] ?? '');
             if (!Utils::verifyNonce($_POST['guard-nonce'] ?? '', self::NONCE_ACTION)) {
                 $error = 'Security token expired — please try again.';
+            } elseif ($action === 'webhook') {
+                // Switch the scheduler webhook on without a pairing code.
+                $webhook = $boot->isInstalled() ? $this->ensureWebhook() : null;
             } else {
                 try {
                     // `repair` starts a fresh pairing window on an installed
                     // agent; otherwise this is a first-time install.
                     // The site's base URL is pinned for the agent's self-calls.
                     $site = $this->absoluteUrl('');
-                    $result = (($_POST['guard-action'] ?? '') === 'repair')
+                    $result = $action === 'repair'
                         ? $boot->repair($site)
                         : $boot->install($cloud, $site);
+                    $webhook = $this->ensureWebhook();
                 } catch (BootstrapException $e) {
                     $error = $e->getMessage();
                 } catch (\Throwable $e) {
@@ -371,7 +486,7 @@ class GuardHelperPlugin extends Plugin
             }
         }
 
-        $this->renderAndExit($this->page($boot, $cloud, $result, $error));
+        $this->renderAndExit($this->page($boot, $cloud, $result, $error, $webhook));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -515,6 +630,52 @@ class GuardHelperPlugin extends Plugin
             </details>';
     }
 
+    /**
+     * Whether Guard Cloud can run this site's scheduled jobs, for the
+     * no-admin2 setup page: the state, what Guard Helper just changed, and a
+     * button when switching the webhook on would help.
+     *
+     * @param array<string,mixed>|null $webhook ensure()'s result when this
+     *   request just ran it, otherwise null (the current status is read)
+     */
+    private function webhookNotice(?array $webhook): string
+    {
+        if ($webhook === null) {
+            try {
+                $webhook = $this->webhook()->status();
+            } catch (\Throwable $e) {
+                return '';
+            }
+        }
+
+        $e = static function ($s): string {
+            return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        };
+        $state = (string) ($webhook['state'] ?? '');
+        $ready = $state === 'ready';
+        $title = $ready
+            ? (!empty($webhook['changed']) ? 'Scheduled jobs: Grav&rsquo;s scheduler webhook is now on.' : 'Scheduled jobs: Guard Cloud can run them.')
+            : ($state === 'unverified'
+                ? 'Scheduled jobs: set up, but couldn&rsquo;t confirm the agent reads it.'
+                : 'Scheduled jobs: Guard Cloud may not be able to run them.');
+
+        $button = '';
+        if (!empty($webhook['managed']) && in_array($state, ['off', 'mismatch', 'not_writable', 'busy', 'error'], true)) {
+            $button = '
+                <form method="post">
+                    <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
+                    <input type="hidden" name="guard-action" value="webhook">
+                    <button type="submit" class="secondary">Turn on scheduler webhook</button>
+                </form>';
+        }
+
+        return '
+            <div class="state ' . ($ready ? 'green' : 'amber') . '">
+                <strong>' . $title . '</strong>
+                <p class="muted">' . $e($webhook['message'] ?? '') . '</p>' . $button . '
+            </div>';
+    }
+
     /** Coarse on purpose: "recently" vs "a while ago", not a precise figure. */
     private static function ago(int $unixSeconds): string
     {
@@ -588,7 +749,10 @@ class GuardHelperPlugin extends Plugin
     }
 
     /** Build the self-contained HTML page. */
-    private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error): string
+    /**
+     * @param array<string,mixed>|null $webhook ensure()'s result, when this request ran it
+     */
+    private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error, ?array $webhook = null): string
     {
         $e = static fn($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
         $endpoint = $this->absoluteUrl($result['endpoint_path'] ?? $boot->endpointPath());
@@ -612,7 +776,8 @@ class GuardHelperPlugin extends Plugin
                 <label>Agent endpoint</label>
                 <div class="code">' . $e($endpoint) . '</div>
                 <p class="muted">To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it is single-use).</p>'
-                . $this->cronNotice($boot) . '
+                . $this->cronNotice($boot)
+                . $this->webhookNotice($webhook) . '
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
                     <input type="hidden" name="guard-action" value="repair">
@@ -678,6 +843,8 @@ class GuardHelperPlugin extends Plugin
   button{margin-top:16px;width:100%;background:var(--primary);color:#fff;border:0;border-radius:6px;padding:12px;font-size:15px;font-weight:600;cursor:pointer}
   button:hover:not(:disabled){background:#1f57d6}
   button:disabled{opacity:.6;cursor:default}
+  button.secondary{width:auto;margin-top:10px;padding:8px 14px;font-size:13px;background:transparent;color:var(--fg);border:1px solid var(--border)}
+  button.secondary:hover{background:#f4f4f5}
   .muted{color:var(--muted);font-size:13px}
   .ok{color:var(--ok);font-weight:600;margin-bottom:8px}
   .err{background:#fceeee;color:var(--err);border:1px solid #f5c2bd;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px}

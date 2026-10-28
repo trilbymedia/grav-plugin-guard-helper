@@ -2,7 +2,7 @@ name: Guard Helper
 slug: guard-helper
 type: plugin
 testing: true
-version: 0.2.0-beta.5
+version: 0.2.0-beta.6
 description: Optional companion plugin for Grav Guard — browser-based agent setup, an in-admin health checker, and SSO token consumption. The Guard control channel never depends on this plugin.
 icon: shield
 author:
@@ -58,3 +58,14 @@ form:
       label: Guard Cloud signup URL
       help: Where users without a Guard Cloud account are sent to sign up free. Shown on the setup panel.
       default: 'https://gravguard.com'
+    scheduler_webhook:
+      type: toggle
+      label: Let Guard run scheduled jobs through Grav's webhook
+      help: "Most hosts don't let the agent start Grav from a web request, so Guard Cloud runs this site's scheduled jobs through Grav's scheduler webhook. When this is on, setting up or re-pairing the agent switches the webhook on with a random token (a token you already have is kept), and Guard Helper answers the webhook if the Scheduler Webhook plugin isn't installed. Turning this off stops both; it does not change settings already saved in Configuration → Scheduler."
+      highlight: 1
+      default: 1
+      options:
+        1: PLUGIN_ADMIN.ENABLED
+        0: PLUGIN_ADMIN.DISABLED
+      validate:
+        type: bool

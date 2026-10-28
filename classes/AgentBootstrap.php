@@ -500,6 +500,39 @@ final class AgentBootstrap
     }
 
     /**
+     * The same address moved to https: the only change "Show pairing code"
+     * makes to a site URL already recorded. The agent sends the scheduler
+     * webhook's token over https only, so a site paired while it was still on
+     * http needs this to use the webhook at all. Any other difference (host,
+     * port, path) is left alone, since the URL Grav reports comes from the
+     * request.
+     */
+    private static function isHttpsUpgrade(string $current, string $offered): bool
+    {
+        $a = parse_url($current);
+        $b = parse_url($offered);
+        if (!is_array($a) || !is_array($b)) {
+            return false;
+        }
+        if (strtolower((string) ($a['scheme'] ?? '')) !== 'http' || strtolower((string) ($b['scheme'] ?? '')) !== 'https') {
+            return false;
+        }
+        if (!isset($a['host'], $b['host']) || strtolower($a['host']) !== strtolower($b['host'])) {
+            return false;
+        }
+
+        // Scheme and host are case-insensitive; the path is not (/blog and
+        // /BLOG are different places), and a port has to be the same one or
+        // absent from both.
+        return ($a['port'] ?? null) === ($b['port'] ?? null)
+            && rtrim((string) ($a['path'] ?? ''), '/') === rtrim((string) ($b['path'] ?? ''), '/')
+            && ($a['query'] ?? null) === ($b['query'] ?? null)
+            && ($a['fragment'] ?? null) === ($b['fragment'] ?? null)
+            && ($a['user'] ?? null) === ($b['user'] ?? null)
+            && ($a['pass'] ?? null) === ($b['pass'] ?? null);
+    }
+
+    /**
      * Start a FRESH pairing window on an already-installed agent, reusing its
      * existing key + config. The original code is single-use, so this is how a
      * super-admin gets a new one to enter in Guard Cloud (e.g. they navigated
@@ -511,7 +544,8 @@ final class AgentBootstrap
      * pairing, so on a paired site the code can simply be ignored.
      *
      * @param string|null $siteUrl pinned into the config when it has none yet
-     *   (agents installed before the Helper recorded it)
+     *   (agents installed before the Helper recorded it), or when it is the
+     *   recorded address moved from http to https
      * @return array<string,mixed>
      */
     public function repair(?string $siteUrl = null): array
@@ -532,7 +566,7 @@ final class AgentBootstrap
             throw new BootstrapException('The agent configuration is unreadable — re-run setup.');
         }
         $site = self::siteUrl($siteUrl);
-        if (!isset($config['site_url']) && $site !== null) {
+        if ($site !== null && (!isset($config['site_url']) || self::isHttpsUpgrade((string) $config['site_url'], $site))) {
             $config['site_url'] = $site;
             file_put_contents(
                 $configFile,

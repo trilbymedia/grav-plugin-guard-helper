@@ -1,3 +1,23 @@
+# v0.2.0-beta.6
+## 10/27/2026
+
+1. [](#new)
+    * Setting up or re-pairing the agent now switches on Grav's scheduler webhook, so Guard Cloud can run the site's scheduled jobs on hosts where the agent can't start Grav itself (most shared and managed hosts). A random 64-character token is generated only when the site has none; a token you already have is kept, and every other scheduler setting is left as it is
+    * Guard Helper answers the scheduler webhook itself when the Scheduler Webhook plugin isn't installed, so no other plugin is needed. It accepts POST only, with the token in the `X-Webhook-Token` header, and runs the jobs that are due, never a single job or all of them
+    * The Guard page shows whether Guard Cloud can run the site's scheduled jobs, says what's wrong when it can't, and has a **Turn on scheduler webhook** button for sites paired before this release, in Admin Next and on the classic setup page
+    * New **Let Guard run scheduled jobs through Grav's webhook** setting (on by default). Turning it off stops Guard Helper from changing the scheduler settings or answering the webhook
+2. [](#improved)
+    * The scheduler webhook is now checked against the agent's own settings reader, found the way the agent finds its code (including self-updated releases). When that reader can't be loaded the Guard page says the webhook is set up but couldn't be confirmed, instead of reporting it as ready
+    * A wrong webhook path in `user/config/scheduler.yaml` is now put right even when an environment folder already has the correct one, since the agent reads only that file
+    * Environment folders (`user/env/<host>/config/scheduler.yaml`) that set the webhook get the same values, since Grav reads them there first; none are ever created
+    * Nothing is written unless every file that needs to change is writable, a `scheduler.yaml` Grav can't parse is never rewritten, a token shorter than 32 characters is never switched on, and two different tokens in two files are left for you to sort out
+    * A webhook path the Scheduler Webhook plugin doesn't answer (it only answers `/scheduler/webhook`) is put back to `/scheduler/webhook`, since the agent would otherwise call an address nothing answers
+    * **Show pairing code** now moves a site address the agent recorded as `http://` to `https://` when the site has since moved to https, as long as the path is identical (`/blog` is not `/BLOG`) and the port is the same. The agent only sends the webhook token over https
+3. [](#bugfix)
+    * Guard Helper's admin API now honours API-key scopes: a scoped key (for example one limited to reading pages) created on a super-admin account can no longer set up, re-pair or read the status of the Guard Agent
+    * Setting up the scheduler webhook twice at once (a double click, or the setup page and Admin Next together) can no longer swap in a second token or drop a scheduler edit made in between
+    * A leftover "enabled" flag for a Scheduler Webhook plugin that is no longer installed no longer stops Guard Helper from answering the webhook
+
 # v0.2.0-beta.5
 ## 10/27/2026
 

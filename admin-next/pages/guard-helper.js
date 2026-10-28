@@ -4,7 +4,8 @@
 // item (/plugin/guard-helper). Shows install status + requirements and lets a
 // super-admin download + verify + unpack + pair the standalone agent in one
 // click, then displays the single-use pairing code to enter in Guard Cloud.
-// Backed by GuardController (GET /guard-helper/status, POST /guard-helper/setup).
+// Backed by GuardController (GET /guard-helper/status, POST /guard-helper/setup,
+// /repair and /webhook).
 //
 // The element tag is injected by admin-next as window.__GRAV_PAGE_TAG.
 const TAG = window.__GRAV_PAGE_TAG;
@@ -76,7 +77,7 @@ class GuardHelperPage extends HTMLElement {
 		this._patch({ busy: true, error: null });
 		try {
 			const result = await this._api('POST', '/guard-helper/setup', {});
-			this._patch({ busy: false, result, data: { ...(this._state.data || {}), installed: true } });
+			this._patch({ busy: false, result, data: { ...(this._state.data || {}), installed: true, webhook: result.webhook ?? null } });
 		} catch (e) {
 			this._patch({ busy: false, error: e.message });
 		}
@@ -91,9 +92,21 @@ class GuardHelperPage extends HTMLElement {
 		this._patch({ busy: true, error: null });
 		try {
 			const result = await this._api('POST', '/guard-helper/repair', {});
-			this._patch({ busy: false, result });
+			const data = result.webhook ? { ...(this._state.data || {}), webhook: result.webhook } : this._state.data;
+			this._patch({ busy: false, result, data });
 		} catch (e) {
 			this._patch({ busy: false, error: e.message });
+		}
+	}
+
+	async _enableWebhook() {
+		if (this._state.busy) return;
+		this._patch({ busy: true, webhookError: null });
+		try {
+			const webhook = await this._api('POST', '/guard-helper/webhook', {});
+			this._patch({ busy: false, data: { ...(this._state.data || {}), webhook } });
+		} catch (e) {
+			this._patch({ busy: false, webhookError: e.message });
 		}
 	}
 
@@ -108,6 +121,7 @@ class GuardHelperPage extends HTMLElement {
 		this.shadowRoot.getElementById('setup-btn')?.addEventListener('click', () => this._setup());
 		this.shadowRoot.getElementById('repair-btn')?.addEventListener('click', () => this._repair());
 		this.shadowRoot.getElementById('retry-btn')?.addEventListener('click', () => this._loadStatus());
+		this.shadowRoot.getElementById('webhook-btn')?.addEventListener('click', () => this._enableWebhook());
 		this.shadowRoot.querySelectorAll('[data-copy]').forEach((el) =>
 			el.addEventListener('click', () => this._copy(el.getAttribute('data-copy'))));
 	}
@@ -209,6 +223,37 @@ class GuardHelperPage extends HTMLElement {
 		</details>`;
 	}
 
+	// Whether Guard Cloud can run this site's scheduled jobs. Most hosts don't
+	// let the agent start Grav from a web request, so on those the only way
+	// is Grav's scheduler webhook, which this plugin switches on when it
+	// installs or re-pairs the agent. The token itself never reaches this page.
+	_webhook(s) {
+		const w = s.data?.webhook;
+		if (!w) return '';
+
+		const ready = w.state === 'ready';
+		const title = ready
+			? (w.changed ? "Scheduled jobs: Grav's scheduler webhook is now on." : 'Scheduled jobs: Guard Cloud can run them.')
+			: (w.state === 'unverified'
+				? "Scheduled jobs: set up, but couldn't confirm the agent reads it."
+				: 'Scheduled jobs: Guard Cloud may not be able to run them.');
+		const canFix = w.managed && ['off', 'mismatch', 'not_writable', 'busy', 'error'].includes(w.state);
+		const btn = canFix
+			? `<button id="webhook-btn" class="btn ghost sm" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Turn on scheduler webhook'}</button>`
+			: '';
+		const err = s.webhookError ? `<div class="err">${esc(s.webhookError)}</div>` : '';
+
+		return `<div class="status-row ${ready ? 'ok-row' : 'warn-row'}">
+			<span class="dot"></span>
+			<div class="row-body">
+				<strong>${esc(title)}</strong>
+				<p class="hint">${esc(w.message || '')}</p>
+				${err}
+				${btn}
+			</div>
+		</div>`;
+	}
+
 	/**
 	 * What is actually running here. The agent version is the one people need
 	 * when something misbehaves, and it was nowhere on this screen.
@@ -287,6 +332,7 @@ class GuardHelperPage extends HTMLElement {
 				<p class="muted">Installed and ready. To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it's single-use).</p>
 				${this._codeRow('Agent endpoint', s.data?.endpoint || s.result?.endpoint || s.data?.endpoint_path || '')}
 				${this._delivery(s)}
+				${this._webhook(s)}
 				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
 				${this._pairing(s)}
@@ -359,6 +405,10 @@ class GuardHelperPage extends HTMLElement {
 			padding:12px 14px; border-radius:8px; }
 		.status-row .dot { flex:none; margin-top:6px; }
 		.status-row strong { display:block; font-size:14px; margin-bottom:2px; }
+		.status-row .row-body { display:flex; flex-direction:column; gap:8px; }
+		.status-row .row-body strong { margin-bottom:-6px; }
+		/* Two status rows in a row: the gap between them comes from the card. */
+		.status-row + .status-row { margin-top:0; }
 		.ok-row { background:color-mix(in oklab,#16a34a 8%,transparent);
 			border:1px solid color-mix(in oklab,#16a34a 26%,transparent); }
 		.ok-row .dot { background:#16a34a; }

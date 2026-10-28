@@ -10,6 +10,7 @@ use Grav\Plugin\Api\Exceptions\ValidationException;
 use Grav\Plugin\Api\Response\ApiResponse;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use Grav\Plugin\GuardHelper\Security\SecurityChecker;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -17,11 +18,13 @@ use Psr\Http\Message\ServerRequestInterface;
 /**
  * Admin2 (API) backend for the browser-only Guard Agent setup.
  *
- * Two endpoints behind the admin-next sidebar page + dashboard widget:
- *   GET  /guard-helper/status — is the agent installed, and where?
- *   POST /guard-helper/setup  — download + verify + unpack + pair in-process
+ * Endpoints behind the admin-next sidebar page + dashboard widget:
+ *   GET  /guard-helper/status  — is the agent installed, and where?
+ *   POST /guard-helper/setup   — download + verify + unpack + pair in-process
+ *   POST /guard-helper/repair  — a fresh pairing code for an installed agent
+ *   POST /guard-helper/webhook — switch on Grav's scheduler webhook for the agent
  *
- * Both are super-admin only: installing software and minting a per-site key is
+ * All are super-admin only: installing software and minting a per-site key is
  * not a delegate-able action. The trust-critical cloud URL comes from plugin
  * config, never the request body — the same rule the classic setup page follows.
  */
@@ -70,6 +73,10 @@ class GuardController extends AbstractApiController
             // is what the screen leads with; cron is one way of achieving it,
             // not the question itself.
             'delivery'      => $boot->deliveryStatus(),
+            // Whether Guard Cloud can run this site's scheduled jobs on a host
+            // where the agent cannot start Grav. Only asked once there is an
+            // agent to use it. Never carries the token.
+            'webhook'       => $boot->isInstalled() ? $this->webhookStatus() : null,
         ]);
     }
 
@@ -84,6 +91,7 @@ class GuardController extends AbstractApiController
             // The site's own base URL, as Grav sees it, is pinned for the
             // agent's self-calls so no signed command can redirect them.
             $result = $boot->install($this->cloudUrl(), $this->siteRoot());
+            $result['webhook'] = $this->ensureWebhook();
         } catch (BootstrapException $e) {
             // Operational failure (unreachable cloud, tampered release, already
             // installed, non-writable root) — a 422 with the human message the
@@ -110,6 +118,7 @@ class GuardController extends AbstractApiController
 
         try {
             $result = $boot->repair($this->siteRoot());
+            $result['webhook'] = $this->ensureWebhook();
         } catch (BootstrapException $e) {
             throw new ValidationException($e->getMessage());
         } catch (\Throwable $e) {
@@ -120,6 +129,22 @@ class GuardController extends AbstractApiController
         $result['endpoint'] = $this->absoluteEndpoint($result['endpoint_path'] ?? $boot->endpointPath());
 
         return ApiResponse::create($result);
+    }
+
+    /**
+     * POST /guard-helper/webhook — switch Grav's scheduler webhook on for the
+     * agent, without generating a pairing code. For a site paired before
+     * Guard Helper did this on its own.
+     */
+    public function webhookEnable(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requireSuperAdmin($request);
+
+        if (!$this->bootstrap()->isInstalled()) {
+            throw new ValidationException('Set up the Guard Agent first.');
+        }
+
+        return ApiResponse::create($this->ensureWebhook());
     }
 
     /**
@@ -154,6 +179,39 @@ class GuardController extends AbstractApiController
         return new AgentBootstrap(GRAV_ROOT);
     }
 
+    private function webhook(): SchedulerWebhook
+    {
+        return SchedulerWebhook::forGrav($this->grav, (bool) $this->config->get('plugins.guard-helper.scheduler_webhook', true));
+    }
+
+    /** @return array<string,mixed>|null null when it cannot be read; never breaks the page */
+    private function webhookStatus(): ?array
+    {
+        try {
+            return $this->webhook()->status();
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Switch the scheduler webhook on, reporting rather than throwing: a
+     * pairing code that was just generated must still reach the screen.
+     *
+     * @return array<string,mixed>
+     */
+    private function ensureWebhook(): array
+    {
+        try {
+            return $this->webhook()->ensure();
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('Guard Helper could not set up the scheduler webhook: ' . $e->getMessage(), ['exception' => $e]);
+
+            return ['state' => 'error', 'ready' => false, 'changed' => false,
+                'message' => "Couldn't set up Grav's scheduler webhook: " . $e->getMessage()];
+        }
+    }
+
     private function cloudUrl(): string
     {
         return (string) $this->config->get('plugins.guard-helper.cloud_url', 'https://gravguard.com');
@@ -184,12 +242,28 @@ class GuardController extends AbstractApiController
      * Installing the agent provisions a per-site key — reserve it for super
      * admins. (requirePermission already lets supers through, but be explicit:
      * a delegated `api.system.write` grant must NOT unlock agent install.)
+     *
+     * A bare super-admin check also lets a scoped API key (say `api.pages.read`)
+     * minted on a super-admin account through, so the key's scope cap is
+     * applied too. The API plugin's requireSuper() does exactly that; older
+     * releases without it get the same cap from scopeAllows() or
+     * requirePermission(), whichever they have.
      */
     private function requireSuperAdmin(ServerRequestInterface $request): void
     {
         $user = $this->getUser($request);
         if (!$this->isSuperAdmin($user)) {
             throw new ForbiddenException('Setting up the Guard Agent requires a super-admin account.');
+        }
+
+        if (method_exists($this, 'requireSuper')) {
+            $this->requireSuper($request);
+        } elseif (method_exists($this, 'scopeAllows')) {
+            if (!$this->scopeAllows($request, 'admin.super')) {
+                throw new ForbiddenException('This API key is not authorized for: admin.super');
+            }
+        } elseif (method_exists($this, 'requirePermission')) {
+            $this->requirePermission($request, 'admin.super');
         }
     }
 }

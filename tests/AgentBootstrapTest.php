@@ -8,6 +8,7 @@ use FilesystemIterator;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
 use Grav\Plugin\GuardHelper\ReleaseVerifier;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -298,6 +299,69 @@ final class AgentBootstrapTest extends TestCase
 
         $boot->repair('https://other.example');
         $this->assertSame('https://example.com', (include $this->gravRoot . '/_guard/data/config.php')['site_url']);
+    }
+
+    /**
+     * The agent sends the scheduler webhook's token over https only, so a
+     * site paired while it was on http has to be able to move. That is the
+     * one change re-pairing makes to a recorded address: same host, port and
+     * path, http to https. Never the other way, and never another host.
+     */
+    public function testRepairMovesARecordedHttpAddressToHttpsAndNothingElse(): void
+    {
+        $agentSrc = realpath(__DIR__ . '/../../agent');
+        if ($agentSrc === false || !is_file($agentSrc . '/agent.php')) {
+            $this->markTestSkipped('agent source not available beside the helper repo');
+        }
+
+        [$descriptor, $zip] = $this->release($this->agentFiles($agentSrc));
+        $boot = $this->boot($this->serving($descriptor, $zip));
+        $boot->install('https://cloud.test', 'http://example.com/blog');
+        $config = fn (): array => include $this->gravRoot . '/_guard/data/config.php';
+        $this->assertSame('http://example.com/blog', $config()['site_url']);
+
+        $boot->repair('https://evil.example/blog');
+        $this->assertSame('http://example.com/blog', $config()['site_url'], 'another host is not taken');
+
+        $boot->repair('https://example.com/other');
+        $this->assertSame('http://example.com/blog', $config()['site_url'], 'another path is not taken');
+
+        $boot->repair('https://example.com/BLOG');
+        $this->assertSame('http://example.com/blog', $config()['site_url'], 'a path that differs only in case is another path');
+
+        $boot->repair('https://Example.com/blog/');
+        $this->assertSame('https://Example.com/blog', $config()['site_url']);
+
+        $boot->repair('http://example.com/blog');
+        $this->assertSame('https://Example.com/blog', $config()['site_url'], 'never back to http');
+    }
+
+    #[DataProvider('httpsUpgrades')]
+    public function testHttpsUpgradeComparison(string $current, string $offered, bool $expected): void
+    {
+        $method = new \ReflectionMethod(AgentBootstrap::class, 'isHttpsUpgrade');
+        $method->setAccessible(true);
+
+        $this->assertSame($expected, $method->invoke(null, $current, $offered));
+    }
+
+    /** @return array<string,array{string,string,bool}> */
+    public static function httpsUpgrades(): array
+    {
+        return [
+            'same address' => ['http://example.com/blog', 'https://example.com/blog', true],
+            'scheme and host in other case' => ['http://example.com/blog', 'HTTPS://EXAMPLE.com/blog', true],
+            'no path' => ['http://example.com', 'https://example.com', true],
+            'same explicit port' => ['http://example.com:8080/blog', 'https://example.com:8080/blog', true],
+            'path in another case' => ['http://example.com/blog', 'https://example.com/BLOG', false],
+            'another path' => ['http://example.com/blog', 'https://example.com/other', false],
+            'another host' => ['http://example.com/blog', 'https://evil.example/blog', false],
+            'port added' => ['http://example.com/blog', 'https://example.com:8443/blog', false],
+            'port dropped' => ['http://example.com:8080/blog', 'https://example.com/blog', false],
+            'another port' => ['http://example.com:8080/blog', 'https://example.com:8443/blog', false],
+            'back to http' => ['https://example.com/blog', 'http://example.com/blog', false],
+            'query added' => ['http://example.com/blog', 'https://example.com/blog?x=1', false],
+        ];
     }
 
     /** @return array<string,string> the files an install needs, relative to the agent root */

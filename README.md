@@ -20,6 +20,18 @@ The CLI one-liner (`curl … | php`, the agent's `installer/gi.php`) remains the
 secondary/advanced path; both produce the same in-webroot layout. The cloud URL
 is set in plugin config (it's trust-critical) and never read from a request.
 
+## Scheduled jobs on hosts without a usable cron
+
+Guard Cloud runs a site's Grav scheduler by sending the agent a signed command over the web. Most hosts don't let PHP start processes in a web request, so the agent can't run `bin/grav scheduler` there; its fallback is Grav's own scheduler webhook. When the plugin installs or re-pairs the agent (or you click **Turn on scheduler webhook** on the Guard page), it:
+
+- switches on `modern.webhook` in `user/config/scheduler.yaml`, generating a random 64-character token only if the site has none (an existing token is never replaced, and one shorter than 32 characters is never switched on),
+- gives an environment folder's `scheduler.yaml` the same values for any webhook key it already sets, since Grav reads it there first,
+- leaves every other scheduler setting alone, and writes nothing unless every file that needs to change is writable.
+
+Grav core holds the webhook settings but no route; the route comes from the Scheduler Webhook plugin, which answers `/scheduler/webhook` only. When that plugin isn't enabled, Guard Helper answers the same route itself: POST only, token in the `X-Webhook-Token` header, due jobs only (no `job` or `mode`). The token stays on the server; Guard Cloud never sees it.
+
+Turn off **Let Guard run scheduled jobs through Grav's webhook** in the plugin settings (`scheduler_webhook: false`) to stop both. Settings already saved stay as they are.
+
 ## Where setup shows up
 
 The setup is discoverable on both admins:
@@ -28,7 +40,8 @@ The setup is discoverable on both admins:
   sidebar opens the setup page (a web component), a **dashboard widget** shows
   agent status with a one-click install, and a **dismissible banner** (with a
   shield icon) prompts setup until the agent is installed. These are backed by a
-  small API (`GET /guard-helper/status`, `POST /guard-helper/setup`),
+  small API (`GET /guard-helper/status`, `POST /guard-helper/setup`,
+  `/repair` and `/webhook`),
   super-admin only.
 - **Admin classic** — a **Guard** admin-menu entry, plus a prominent **top
   dashboard widget** (classic admin has no top-banner primitive, so the widget

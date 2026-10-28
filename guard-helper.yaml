@@ -12,6 +12,15 @@ setup_route: '/_guard-setup'
 # the setup panel — especially after install, when the pairing code is ready.
 signup_url: 'https://gravguard.com'
 
+# Grav's scheduler webhook, for Guard Cloud's scheduler. Most hosts don't let
+# the agent start Grav from a web request, so its only way to run the site's
+# scheduled jobs there is the webhook. When true, installing or re-pairing the
+# agent switches it on in user/config/scheduler.yaml with a random token
+# (keeping any token already set), and the plugin answers /scheduler/webhook
+# itself when the scheduler-webhook plugin is not enabled. false stops both,
+# and leaves the scheduler settings as they are.
+scheduler_webhook: true
+
 # Guard Shield — endpoint-WAF virtual patching. PARKED: kept in code but off and
 # not offered; the plugin ignores these settings and fetches no rules while it is
 # parked (GuardHelperPlugin::SHIELD_PARKED). When it returns, rules are fetched
