@@ -236,8 +236,12 @@ class GuardHelperPage extends HTMLElement {
 			? (w.changed ? "Scheduled jobs: Grav's scheduler webhook is now on." : 'Scheduled jobs: Guard Cloud can run them.')
 			: (w.state === 'unverified'
 				? "Scheduled jobs: set up, but couldn't confirm the agent reads it."
-				: 'Scheduled jobs: Guard Cloud may not be able to run them.');
-		const canFix = w.managed && ['off', 'mismatch', 'not_writable', 'busy', 'error'].includes(w.state);
+				: (['busy', 'write_conflict', 'lock_error'].includes(w.state)
+					? "Scheduled jobs: setup didn't finish, nothing was changed."
+					: 'Scheduled jobs: Guard Cloud may not be able to run them.'));
+		// busy and write_conflict clear by trying again; lock_error once the
+		// folder its message names is writable.
+		const canFix = w.managed && ['off', 'mismatch', 'not_writable', 'busy', 'write_conflict', 'lock_error', 'error'].includes(w.state);
 		const btn = canFix
 			? `<button id="webhook-btn" class="btn ghost sm" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Turn on scheduler webhook'}</button>`
 			: '';

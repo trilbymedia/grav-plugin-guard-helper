@@ -1,3 +1,14 @@
+# v0.2.0-beta.7
+## 10/27/2026
+
+1. [](#improved)
+    * The scheduler webhook setup now says so when it can't finish, instead of calling every problem "busy". If a scheduler file changed while Guard was updating it (for example you saved Configuration → Scheduler at the same moment), Guard starts over from the new contents, and if that keeps happening it writes nothing and asks you to try again. If Guard can't create or lock its own lock file, it names the folder that needs to be writable. Both show on the Guard page in Admin Next and on the classic setup page, with the button to try again
+    * The scheduler webhook path is now checked exactly the way the agent reads it. A path with stray whitespace, a trailing slash or different capitalization (`' /scheduler/webhook '`, `/Scheduler/Webhook`) is put back to `/scheduler/webhook` in `user/config/scheduler.yaml` and in any environment folder that sets one
+2. [](#bugfix)
+    * Saving Grav's scheduler settings while Guard is setting up the webhook can no longer be overwritten: every file is compared again just before it is written, and a file that changed is read and decided on again
+    * Clearing Grav's cache can no longer break the lock that keeps two setup requests apart. The lock file now lives in `user/data/guard-helper/`, which a cache clear never touches
+    * The Guard page and the scheduler check now always read the settings through the agent release that is actually running (including a self-updated one), never a superseded copy still in `_guard/src`. If the settings reader that gets loaded isn't from the running release, the webhook shows as "couldn't confirm" instead of ready
+
 # v0.2.0-beta.6
 ## 10/27/2026
 

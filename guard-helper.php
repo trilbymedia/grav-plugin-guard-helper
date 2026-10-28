@@ -657,10 +657,12 @@ class GuardHelperPlugin extends Plugin
             ? (!empty($webhook['changed']) ? 'Scheduled jobs: Grav&rsquo;s scheduler webhook is now on.' : 'Scheduled jobs: Guard Cloud can run them.')
             : ($state === 'unverified'
                 ? 'Scheduled jobs: set up, but couldn&rsquo;t confirm the agent reads it.'
-                : 'Scheduled jobs: Guard Cloud may not be able to run them.');
+                : (in_array($state, ['busy', 'write_conflict', 'lock_error'], true)
+                    ? 'Scheduled jobs: setup didn&rsquo;t finish, nothing was changed.'
+                    : 'Scheduled jobs: Guard Cloud may not be able to run them.'));
 
         $button = '';
-        if (!empty($webhook['managed']) && in_array($state, ['off', 'mismatch', 'not_writable', 'busy', 'error'], true)) {
+        if (!empty($webhook['managed']) && in_array($state, ['off', 'mismatch', 'not_writable', 'busy', 'write_conflict', 'lock_error', 'error'], true)) {
             $button = '
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">

@@ -48,7 +48,13 @@ namespace Grav\Plugin\GuardHelper;
  *   - the whole read-decide-write runs under one exclusive lock, with the
  *     files read again inside it, so two requests cannot each generate a
  *     token and have the second save discard the first's token or any
- *     scheduler edit made in between
+ *     scheduler edit made in between. The lock file lives in user/data, which
+ *     clearing Grav's cache never touches, and is never deleted
+ *   - Grav's own config saves do not take that lock, so each file is also
+ *     fingerprinted when it is read and compared again just before it is
+ *     written; a file that changed in between starts the whole decision over
+ *     (WRITE_ATTEMPTS times), and nothing is written over a change Guard
+ *     has not seen
  *   - the base file's path is checked and repaired on its own: the agent
  *     reads only user/config/scheduler.yaml, so a correct path in an
  *     environment file does not make a wrong one there harmless
@@ -74,6 +80,9 @@ final class SchedulerWebhook
 
     /** How long ensure() waits for another request's lock before giving up. */
     public const LOCK_WAIT_MS = 5000;
+
+    /** How many times ensure() starts over when a file changes under it before it writes. */
+    public const WRITE_ATTEMPTS = 3;
 
     /** @var string */
     private $gravRoot;
@@ -266,9 +275,19 @@ final class SchedulerWebhook
         // The release the agent actually runs, not just a flat install.
         $agentAutoload = self::resolveAgentAutoload($root);
 
-        $cacheDir = $locator->findResource('cache://', true, true);
-        $lockFile = (is_string($cacheDir) && $cacheDir !== '' ? rtrim($cacheDir, '/') : $root . '/cache')
-            . '/guard-helper-scheduler.lock';
+        // Not in cache://: clearing Grav's cache deletes the files there, and a
+        // lock file deleted while one request holds it lets a second request
+        // lock a new one. user/data is site data that is never cleared.
+        $lockDir = null;
+        try {
+            $lockDir = $locator->findResource('user-data://guard-helper', true, true);
+        } catch (\Throwable $e) {
+            // no user-data stream on this Grav: use the folder it stands for
+        }
+        if (!is_string($lockDir) || $lockDir === '') {
+            $lockDir = $root . '/user/data/guard-helper';
+        }
+        $lockFile = rtrim($lockDir, '/') . '/scheduler.lock';
 
         return new self(
             $root,
@@ -296,19 +315,42 @@ final class SchedulerWebhook
                 $yaml->save($data);
                 $yaml->free();
             },
-            static function (string $file) use ($agentAutoload): ?array {
-                if ($agentAutoload === null) {
-                    return null;
-                }
-                require_once $agentAutoload;
-                if (!class_exists(\GravGuard\Agent\Support\Yaml::class)) {
-                    return null;
-                }
-
-                return \GravGuard\Agent\Support\Yaml::load($file);
-            },
+            self::agentReader($agentAutoload),
             $lockFile
         );
+    }
+
+    /**
+     * The agent's own YAML reader, from the autoloader of the release the agent
+     * runs. Null (so the webhook is only ever `unverified`) when there is no
+     * such autoloader, when it does not provide the reader, or when the reader
+     * that is loaded came from somewhere else: a class loaded earlier in the
+     * request from another copy of the agent would answer for a release the
+     * agent is not running.
+     *
+     * @return callable(string):?array
+     */
+    public static function agentReader(?string $agentAutoload): callable
+    {
+        return static function (string $file) use ($agentAutoload): ?array {
+            if ($agentAutoload === null) {
+                return null;
+            }
+            require_once $agentAutoload;
+            if (!class_exists(\GravGuard\Agent\Support\Yaml::class)) {
+                return null;
+            }
+
+            // <release>/src/autoload.php: the reader has to live in that src/.
+            $src = realpath(dirname($agentAutoload));
+            $loaded = (new \ReflectionClass(\GravGuard\Agent\Support\Yaml::class))->getFileName();
+            $loaded = is_string($loaded) ? realpath($loaded) : false;
+            if ($src === false || $loaded === false || strpos($loaded, $src . DIRECTORY_SEPARATOR) !== 0) {
+                return null;
+            }
+
+            return \GravGuard\Agent\Support\Yaml::load($file);
+        };
     }
 
     /**
@@ -327,6 +369,9 @@ final class SchedulerWebhook
      *   unreadable   a scheduler.yaml Grav cannot parse
      *   unsupported  this Grav cannot run its scheduler from a webhook
      *   busy         (ensure() only) another request is changing the files
+     *   lock_error   (ensure() only) Guard cannot create or take its lock file
+     *   write_conflict  (ensure() only) a scheduler file changed while Guard was
+     *                updating it, WRITE_ATTEMPTS times in a row; nothing was written
      *   not_writable (ensure() only) a file that has to change cannot be written
      *
      * @return array<string,mixed>
@@ -373,12 +418,23 @@ final class SchedulerWebhook
         // decision is made again from the files as they are once the lock is
         // ours, and a token found then is kept.
         $lock = $this->lock();
-        if ($lock === null) {
-            return $this->result('busy') + ['changed' => false];
+        if (!is_resource($lock)) {
+            return ($lock === 'busy'
+                ? $this->result('busy')
+                : $this->result('lock_error', ['folder' => $this->relative(dirname($this->lockFile))])) + ['changed' => false];
         }
 
         try {
-            return $this->ensureLocked();
+            // Grav's own config saves do not take our lock. If a file changes
+            // between the read and the write, decide again from what is there.
+            for ($attempt = 0; $attempt < self::WRITE_ATTEMPTS; $attempt++) {
+                $res = $this->ensureLocked();
+                if ($res !== null) {
+                    return $res;
+                }
+            }
+
+            return $this->result('write_conflict') + ['changed' => false];
         } finally {
             flock($lock, LOCK_UN);
             fclose($lock);
@@ -386,35 +442,58 @@ final class SchedulerWebhook
     }
 
     /**
-     * Take the exclusive lock, waiting up to the configured time.
+     * Take the exclusive lock, waiting up to the configured time. The lock
+     * file is only ever opened, never deleted.
      *
-     * @return resource|null null when another request holds it for that long
-     *   (or the lock file cannot be opened: nothing is changed unlocked)
+     * Contention and a lock that cannot work are told apart, because only
+     * the first is cured by trying again:
+     *
+     * @return resource|string the held lock; 'busy' when another request kept
+     *   it for the whole wait; 'lock_error' when the lock file cannot be
+     *   created or opened, or flock() fails for a reason other than the lock
+     *   being held (a file system without lock support). Nothing is ever
+     *   changed without the lock.
      */
     private function lock()
     {
         $dir = dirname($this->lockFile);
         if (!is_dir($dir)) {
-            @mkdir($dir, 0775, true);
+            @mkdir($dir, 0755, true);
+        }
+        if (!is_dir($dir)) {
+            return 'lock_error';
         }
         $fh = @fopen($this->lockFile, 'c');
         if ($fh === false) {
-            return null;
+            return 'lock_error';
         }
         $deadline = microtime(true) + $this->lockWaitMs / 1000;
         do {
-            if (flock($fh, LOCK_EX | LOCK_NB)) {
+            $wouldBlock = 0;
+            if (@flock($fh, LOCK_EX | LOCK_NB, $wouldBlock)) {
                 return $fh;
+            }
+            if (!$wouldBlock) {
+                // Failed, but not because someone else holds it.
+                fclose($fh);
+
+                return 'lock_error';
             }
             usleep(50000);
         } while (microtime(true) < $deadline);
         fclose($fh);
 
-        return null;
+        return 'busy';
     }
 
-    /** @return array<string,mixed> */
-    private function ensureLocked(): array
+    /**
+     * One read-decide-write pass, inside the lock.
+     *
+     * @return array<string,mixed>|null null when a file changed after it was
+     *   read and before it could be written, so nothing (more) was written
+     *   and the caller should decide again
+     */
+    private function ensureLocked(): ?array
     {
         // Everything below reads the files afresh, inside the lock.
         $status = $this->status();
@@ -422,7 +501,11 @@ final class SchedulerWebhook
             return $status + ['changed' => false];
         }
 
-        $layers = $this->layers();
+        try {
+            $layers = $this->layers();
+        } catch (\RuntimeException $e) {
+            return $this->result('unreadable', ['file' => $e->getMessage()]) + ['changed' => false];
+        }
         $token = $this->tokens($layers);
         if ($token === null) {
             return $this->result('conflict', ['files' => $this->definingFiles($layers, 'token')]) + ['changed' => false];
@@ -486,18 +569,64 @@ final class SchedulerWebhook
             }
         }
 
+        // Everything the decision rested on (every layer, not just the files
+        // being written) must still be what was read.
+        if (!$this->unchanged($layers)) {
+            return null;
+        }
+
         // Environment files first: if user/config then fails, the agent
         // still reads the old settings and simply does not try the webhook.
+        // Each file is compared once more right before its own write; a
+        // change found part way leaves the files already written in a state
+        // the next pass reads (it keeps the token they carry) and finishes.
         krsort($changes);
-        try {
-            foreach ($changes as $i => $data) {
-                ($this->write)($layers[$i]['file'], $data);
+        foreach ($changes as $i => $data) {
+            if (!$this->unchanged([$layers[$i]])) {
+                return null;
             }
-        } catch (\Throwable $e) {
-            return $this->result('not_writable', ['file' => $layers[$i]['rel']]) + ['changed' => false];
+            try {
+                ($this->write)($layers[$i]['file'], $data);
+            } catch (\Throwable $e) {
+                return $this->result('not_writable', ['file' => $layers[$i]['rel']]) + ['changed' => false];
+            }
         }
 
         return $this->status() + ['changed' => true];
+    }
+
+    /** sha256 of a file's bytes; null when there is no such file. */
+    private static function fingerprint(string $file): ?string
+    {
+        if (!is_file($file)) {
+            return null;
+        }
+        $hash = @hash_file('sha256', $file);
+
+        return $hash === false ? 'unreadable' : $hash;
+    }
+
+    /**
+     * Whether every given layer's file is still exactly what was read.
+     *
+     * @param array<int,array<string,mixed>> $layers
+     */
+    private function unchanged(array $layers): bool
+    {
+        foreach ($layers as $layer) {
+            $now = self::fingerprint($layer['file']);
+            if ($now === null || $layer['hash'] === null) {
+                if ($now !== $layer['hash']) {
+                    return false;
+                }
+                continue;
+            }
+            if ($now === 'unreadable' || !hash_equals($layer['hash'], $now)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -505,7 +634,11 @@ final class SchedulerWebhook
      * the environment files. Throws with the relative path of a file that
      * cannot be parsed, or whose `modern`/`webhook` is not a map.
      *
-     * @return array<int,array{file:string,rel:string,base:bool,data:array}>
+     * Each layer carries `hash`, the fingerprint of the file's bytes taken
+     * BEFORE it is parsed: a change landing between the two makes the parse
+     * newer than the fingerprint, which then no longer matches.
+     *
+     * @return array<int,array{file:string,rel:string,base:bool,data:array,hash:?string}>
      */
     private function layers(): array
     {
@@ -514,6 +647,7 @@ final class SchedulerWebhook
         foreach ($files as $i => $file) {
             $rel = $this->relative($file);
             $data = [];
+            $hash = self::fingerprint($file);
             if (is_file($file)) {
                 try {
                     $data = ($this->read)($file);
@@ -525,7 +659,7 @@ final class SchedulerWebhook
                 || (isset($data['modern']) && array_key_exists('webhook', $data['modern']) && !is_array($data['modern']['webhook']))) {
                 throw new \RuntimeException($rel);
             }
-            $layers[] = ['file' => $file, 'rel' => $rel, 'base' => $i === 0, 'data' => $data];
+            $layers[] = ['file' => $file, 'rel' => $rel, 'base' => $i === 0, 'data' => $data, 'hash' => $hash];
         }
 
         return $layers;
@@ -610,7 +744,7 @@ final class SchedulerWebhook
         }
         $seen = isset($agent['modern']['webhook']) && is_array($agent['modern']['webhook']) ? $agent['modern']['webhook'] : [];
         $agentToken = isset($seen['token']) && is_string($seen['token']) ? $seen['token'] : '';
-        $agentPath = self::normalizePath(isset($seen['path']) && is_string($seen['path']) ? $seen['path'] : self::ROUTE);
+        $agentPath = self::normalizePath($seen['path'] ?? null);
 
         if (empty($seen['enabled']) || $agentToken === '' || !hash_equals($token, $agentToken)
             || $agentPath !== self::ROUTE || self::normalizePath($grav['path']) !== self::ROUTE) {
@@ -682,6 +816,12 @@ final class SchedulerWebhook
                 return "The scheduler webhook is set up, but Guard couldn't confirm the agent reads it: the agent's own settings reader couldn't be loaded from _guard/. Reinstall or update the agent, then check again.";
             case 'busy':
                 return 'Another request is changing the scheduler settings right now. Try again in a moment.';
+            case 'lock_error':
+                $folder = isset($ctx['folder']) && is_string($ctx['folder']) && $ctx['folder'] !== '' ? $ctx['folder'] : 'user/data/guard-helper';
+
+                return "Guard couldn't create or lock its lock file, so it changed nothing. Make {$folder} writable by the web server (and on a file system that supports file locks), then try again.";
+            case 'write_conflict':
+                return 'The scheduler settings changed while Guard was updating them, so it wrote nothing. Try again.';
             case 'off':
                 return $managed
                     ? "Grav's scheduler webhook is off. Guard Cloud can only run this site's scheduled jobs if the server lets the agent start Grav itself, which most hosts don't. Turning it on adds a token to {$file}."
@@ -747,20 +887,37 @@ final class SchedulerWebhook
     }
 
     /**
-     * The path as the agent builds it: one leading slash, no query string.
-     * A trailing slash is kept, because the agent keeps it too, and Grav
-     * answers it with a redirect the agent will not follow.
+     * Whether the agent would call the route: after exactly the agent's own
+     * normalization (SchedulerRunner::webhookConfig()), the path is
+     * `/scheduler/webhook`. Case, a trailing slash and whitespace all count:
+     * the agent keeps them, and Grav answers a trailing slash with a redirect
+     * the agent will not follow.
+     *
+     * @param mixed $path
      */
     private static function isRoute($path): bool
     {
-        return is_string($path) && self::normalizePath($path) === self::ROUTE;
+        return self::normalizePath($path) === self::ROUTE;
     }
 
-    private static function normalizePath(string $path): string
+    /**
+     * The path as the agent builds it, character for character:
+     * `'/' . ltrim((string)($webhook['path'] ?? ROUTE), '/')`, then the query
+     * string or fragment cut off. No trimming of whitespace.
+     *
+     * @param mixed $path
+     */
+    private static function normalizePath($path): string
     {
-        $path = (string) preg_replace('/[?#].*$/s', '', trim($path));
+        if ($path === null) {
+            $path = self::ROUTE;
+        }
+        if (is_array($path) || is_object($path)) {
+            return '/Array'; // the agent's (string) cast; never the route
+        }
+        $path = '/' . ltrim((string) $path, '/');
 
-        return '/' . ltrim($path, '/');
+        return (string) preg_replace('/[?#].*$/s', '', $path);
     }
 
     private static function writable(string $file): bool

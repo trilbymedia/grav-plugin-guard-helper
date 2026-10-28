@@ -599,6 +599,233 @@ final class SchedulerWebhookTest extends TestCase
         }
     }
 
+    // ── a file that changes under Guard ─────────────────────────────────────
+
+    public function testASchedulerSaveThatLandsAfterTheLockedReadIsNotOverwritten(): void
+    {
+        // Grav's own config save takes no lock of ours. Reads: 1 is ensure()'s
+        // status(), 2 is ensureLocked()'s status(), 3 is the locked read the
+        // decision is made from. The save lands right after that third read.
+        $calls = 0;
+        $read = function (string $file) use (&$calls): array {
+            $data = is_file($file) ? include $file : [];
+            if (++$calls === 3) {
+                $this->put($this->base(), ['custom_jobs' => ['admin-added' => ['at' => '* * * * *']]]);
+            }
+
+            return is_array($data) ? $data : [];
+        };
+        $this->put($this->base(), ['custom_jobs' => ['old' => ['at' => '0 * * * *']]]);
+
+        $res = $this->webhook([], [], $read)->ensure();
+
+        $saved = $this->get($this->base());
+        $this->assertSame('ready', $res['state']);
+        $this->assertSame(['admin-added' => ['at' => '* * * * *']], $saved['custom_jobs'], "the admin's save survives");
+        $this->assertTrue($saved['modern']['webhook']['enabled']);
+        $this->assertSame(64, strlen($saved['modern']['webhook']['token']));
+        $this->assertSame(1, $this->writes, 'the first attempt wrote nothing; the second wrote once');
+    }
+
+    public function testAFileThatKeepsChangingIsNeverWrittenOver(): void
+    {
+        $calls = 0;
+        $read = function (string $file) use (&$calls): array {
+            $data = is_file($file) ? include $file : [];
+            if (++$calls >= 3) {
+                $this->put($this->base(), ['custom_jobs' => ['n' . $calls => ['at' => '* * * * *']]]);
+            }
+
+            return is_array($data) ? $data : [];
+        };
+        $this->put($this->base(), ['custom_jobs' => []]);
+
+        $res = $this->webhook([], [], $read)->ensure();
+
+        $this->assertSame('write_conflict', $res['state']);
+        $this->assertFalse($res['changed']);
+        $this->assertFalse($res['ready']);
+        $this->assertSame(0, $this->writes);
+        $this->assertArrayNotHasKey('modern', $this->get($this->base()));
+        $this->assertStringContainsString('changed while Guard was updating', $res['message']);
+        $this->assertSame(1 + 2 * SchedulerWebhook::WRITE_ATTEMPTS, $calls, 'status() once, then a status() and a locked read per attempt');
+    }
+
+    public function testAFileChangedBetweenTwoWritesStartsTheDecisionOver(): void
+    {
+        // The environment file is written first. While it is being written an
+        // admin saves user/config; the base file's own check just before its
+        // write sees that, and the next pass finishes from what is there.
+        $this->put($this->envFile(), ['modern' => ['webhook' => ['enabled' => false]]]);
+        $this->put($this->base(), ['custom_jobs' => []]);
+        $writes = 0;
+        $webhook = new SchedulerWebhook(
+            $this->root,
+            [$this->envFile()],
+            ['managed' => true, 'core' => true, 'plugin_enabled' => false],
+            static function (string $file): array {
+                $data = include $file;
+
+                return is_array($data) ? $data : [];
+            },
+            function (string $file, array $data) use (&$writes): void {
+                $writes++;
+                file_put_contents($file, '<?php return ' . var_export($data, true) . ';');
+                if ($writes === 1) {
+                    $this->put($this->base(), ['custom_jobs' => ['admin-added' => ['at' => '* * * * *']]]);
+                }
+            },
+            static function (string $file): array {
+                return is_file($file) ? (array) include $file : [];
+            },
+            $this->root . '/cache/guard-helper-scheduler.lock',
+            200
+        );
+
+        $res = $webhook->ensure();
+
+        $base = $this->get($this->base());
+        $this->assertSame('ready', $res['state']);
+        $this->assertSame(['admin-added' => ['at' => '* * * * *']], $base['custom_jobs']);
+        $this->assertSame(64, strlen($base['modern']['webhook']['token']));
+        $this->assertTrue($this->get($this->envFile())['modern']['webhook']['enabled'], 'written in the first pass, kept in the second');
+        $this->assertSame(2, $writes);
+    }
+
+    // ── the lock ─────────────────────────────────────────────────────────────
+
+    public function testTheLockFileIsCreatedInItsFolderAndKeptAfterwards(): void
+    {
+        $lock = $this->root . '/user/data/guard-helper/scheduler.lock';
+        $webhook = new SchedulerWebhook(
+            $this->root,
+            [],
+            ['managed' => true, 'core' => true, 'plugin_enabled' => false],
+            static function (string $file): array {
+                $data = include $file;
+
+                return is_array($data) ? $data : [];
+            },
+            static function (string $file, array $data): void {
+                file_put_contents($file, '<?php return ' . var_export($data, true) . ';');
+            },
+            static function (string $file): array {
+                return is_file($file) ? (array) include $file : [];
+            },
+            $lock,
+            200
+        );
+
+        $this->assertSame('ready', $webhook->ensure()['state']);
+        $this->assertFileExists($lock, 'never unlinked');
+        $this->assertSame('0755', substr(sprintf('%o', fileperms(dirname($lock))), -4));
+        $this->assertSame('ready', $webhook->ensure()['state']);
+        $this->assertFileExists($lock);
+    }
+
+    public function testALockFolderThatCannotBeCreatedIsAnErrorNotBusy(): void
+    {
+        // The folder's parent is a file, so it can never exist.
+        file_put_contents($this->root . '/cache', 'not a folder');
+
+        $res = $this->webhook()->ensure();
+
+        $this->assertSame('lock_error', $res['state']);
+        $this->assertFalse($res['changed']);
+        $this->assertSame(0, $this->writes, 'never written without the lock');
+        $this->assertFileDoesNotExist($this->base());
+        $this->assertStringContainsString('cache', $res['message']);
+        $this->assertStringContainsString('writable', $res['message']);
+    }
+
+    public function testALockFileThatCannotBeOpenedIsAnErrorNotBusy(): void
+    {
+        // A folder where the lock file should be.
+        mkdir($this->root . '/cache/guard-helper-scheduler.lock', 0777, true);
+        $start = microtime(true);
+
+        $res = $this->webhook()->ensure();
+
+        $this->assertSame('lock_error', $res['state']);
+        $this->assertLessThan(0.15, microtime(true) - $start, 'no waiting for a lock that cannot work');
+        $this->assertSame(0, $this->writes);
+    }
+
+    public function testLockErrorNamesTheFolderItWasGiven(): void
+    {
+        $msg = SchedulerWebhook::message('lock_error', ['folder' => 'user/data/guard-helper']);
+        $this->assertStringContainsString('user/data/guard-helper', $msg);
+    }
+
+    // ── paths, exactly as the agent reads them ──────────────────────────────
+
+    /** @return array<string,array{0:string}> */
+    public static function pathsTheAgentWouldNotCall(): array
+    {
+        return [
+            'quoted whitespace around' => [' /scheduler/webhook '],
+            'leading whitespace' => [' /scheduler/webhook'],
+            'trailing whitespace' => ['/scheduler/webhook '],
+            'trailing slash' => ['/scheduler/webhook/'],
+            'trailing slash and whitespace' => ['/scheduler/webhook/ '],
+            'different case' => ['/Scheduler/Webhook'],
+            'tab' => ["\t/scheduler/webhook"],
+            'empty' => [''],
+            'another path' => ['/cron/run'],
+        ];
+    }
+
+    /** @return array<string,array{0:string}> */
+    public static function pathsTheAgentCalls(): array
+    {
+        return [
+            'exact' => ['/scheduler/webhook'],
+            'no leading slash' => ['scheduler/webhook'],
+            'doubled slashes in front' => ['//scheduler/webhook'],
+            'a query string is dropped' => ['/scheduler/webhook?x=1'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('pathsTheAgentWouldNotCall')]
+    public function testAPathTheAgentWouldNotCallIsRepairedInTheBaseFile(string $path): void
+    {
+        // The oracle is the agent's own line, SchedulerRunner::webhookConfig().
+        $agent = (string) preg_replace('/[?#].*$/s', '', '/' . ltrim($path, '/'));
+        $this->assertNotSame('/scheduler/webhook', $agent);
+
+        $this->put($this->base(), ['modern' => ['webhook' => ['enabled' => true, 'token' => $this->strongToken(), 'path' => $path]]]);
+
+        $this->assertSame('mismatch', $this->webhook()->status()['state']);
+        $res = $this->webhook()->ensure();
+
+        $this->assertSame('ready', $res['state']);
+        $this->assertSame('/scheduler/webhook', $this->get($this->base())['modern']['webhook']['path']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('pathsTheAgentWouldNotCall')]
+    public function testAPathTheAgentWouldNotCallIsRepairedInAnEnvironmentFile(string $path): void
+    {
+        $token = $this->strongToken();
+        $this->put($this->base(), ['modern' => ['webhook' => ['enabled' => true, 'token' => $token, 'path' => '/scheduler/webhook']]]);
+        $this->put($this->envFile(), ['modern' => ['webhook' => ['path' => $path]]]);
+
+        $this->assertSame('mismatch', $this->webhook([$this->envFile()])->status()['state']);
+        $res = $this->webhook([$this->envFile()])->ensure();
+
+        $this->assertSame('ready', $res['state']);
+        $this->assertSame('/scheduler/webhook', $this->get($this->envFile())['modern']['webhook']['path']);
+        $this->assertSame('/scheduler/webhook', $this->get($this->base())['modern']['webhook']['path']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('pathsTheAgentCalls')]
+    public function testAPathTheAgentCallsAtTheRouteIsLeftAlone(string $path): void
+    {
+        $this->put($this->base(), ['modern' => ['webhook' => ['enabled' => true, 'token' => $this->strongToken(), 'path' => $path]]]);
+
+        $this->assertSame('ready', $this->webhook()->ensure()['state']);
+        $this->assertSame(0, $this->writes);
+    }
+
     // ── the agent's autoloader ───────────────────────────────────────────────
 
     private function agentRelease(string $dir): string
@@ -664,6 +891,79 @@ final class SchedulerWebhookTest extends TestCase
         $this->assertSame($flat, SchedulerWebhook::resolveAgentAutoload($this->root));
     }
 
+    private function fakeAgentTree(string $dir, string $name): string
+    {
+        mkdir($dir . '/src/Support', 0777, true);
+        file_put_contents($dir . '/src/autoload.php', "<?php\nspl_autoload_register(static function (string \$c): void {\n"
+            . "    if (\$c === 'GravGuard\\\\Agent\\\\Support\\\\Yaml') { require __DIR__ . '/Support/Yaml.php'; }\n});\n");
+        file_put_contents($dir . '/src/Support/Yaml.php', "<?php\nnamespace GravGuard\\Agent\\Support;\nfinal class Yaml {\n"
+            . "    public static function load(string \$file): array { return ['from' => '{$name}']; }\n}\n");
+
+        return realpath($dir . '/src/autoload.php');
+    }
+
+    /** @return array<string,mixed> */
+    private function worker(array $args): array
+    {
+        $cmd = array_merge([PHP_BINARY, __DIR__ . '/fixtures/agent-reader-worker.php'], $args);
+        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $this->assertIsResource($proc);
+        $out = (string) stream_get_contents($pipes[1]);
+        $err = (string) stream_get_contents($pipes[2]);
+        proc_close($proc);
+        $decoded = json_decode($out, true);
+        $this->assertIsArray($decoded, "worker output: {$out} {$err}");
+
+        return $decoded;
+    }
+
+    public function testTheAgentReaderIsUsedWhenItComesFromTheResolvedRelease(): void
+    {
+        $this->fakeAgentTree($this->root . '/_guard', 'flat');
+        $live = $this->fakeAgentTree($this->root . '/_guard/releases/v1.2.0', 'release');
+        file_put_contents($this->root . '/_guard/current.pointer', 'releases/v1.2.0');
+        $this->put($this->base(), []);
+
+        $out = $this->worker(['reader', SchedulerWebhook::resolveAgentAutoload($this->root), $this->base()]);
+
+        $this->assertSame($live, SchedulerWebhook::resolveAgentAutoload($this->root));
+        $this->assertSame(['from' => 'release'], $out['read']);
+    }
+
+    public function testAReaderLoadedFromAnotherCopyOfTheAgentIsNotTrusted(): void
+    {
+        // Something already registered the flat tree's loader and loaded its
+        // reader; the resolved release is the one the agent runs.
+        $flat = $this->fakeAgentTree($this->root . '/_guard', 'flat');
+        $live = $this->fakeAgentTree($this->root . '/_guard/releases/v1.2.0', 'release');
+        file_put_contents($this->root . '/_guard/current.pointer', 'releases/v1.2.0');
+        $this->put($this->base(), []);
+
+        $out = $this->worker(['reader', $live, $this->base(), $flat]);
+
+        $this->assertNull($out['read'], 'unverified, not read through the superseded copy');
+    }
+
+    public function testAgentBootstrapRegistersOnlyTheActiveReleasesAutoloader(): void
+    {
+        $boot = static function (string $dir, string $name): void {
+            mkdir($dir . '/src/Support', 0777, true);
+            file_put_contents($dir . '/src/autoload.php', "<?php\nspl_autoload_register(static function (string \$c): void {\n"
+                . "    if (\$c === 'GravGuard\\\\Agent\\\\Support\\\\CronProbe') { require __DIR__ . '/Support/CronProbe.php'; }\n});\n");
+            file_put_contents($dir . '/src/Support/CronProbe.php', "<?php\nnamespace GravGuard\\Agent\\Support;\nfinal class CronProbe {\n"
+                . "    public static function inspect(string \$dir): array { return ['from' => '{$name}']; }\n}\n");
+        };
+        $boot($this->root . '/_guard', 'flat');
+        $boot($this->root . '/_guard/releases/v1.2.0', 'release');
+        file_put_contents($this->root . '/_guard/current.pointer', 'releases/v1.2.0');
+
+        $out = $this->worker(['cron', $this->root]);
+
+        $this->assertSame(['from' => 'release'], $out['status']);
+        $included = array_map('realpath', $out['included']);
+        $this->assertSame([realpath($this->root . '/_guard/releases/v1.2.0/src/autoload.php')], $included, 'the flat autoloader was never loaded');
+    }
+
     // ── who answers the route ────────────────────────────────────────────────
 
     private function fakeGrav(bool $enabled, array $loaded): \ArrayAccess
@@ -714,7 +1014,7 @@ final class SchedulerWebhookTest extends TestCase
 
     public function testEveryStateHasAMessageWithoutJargon(): void
     {
-        foreach (['ready', 'unverified', 'busy', 'off', 'mismatch', 'no_endpoint', 'plugin_outdated', 'conflict', 'weak_token', 'not_writable', 'unreadable', 'unsupported'] as $state) {
+        foreach (['ready', 'unverified', 'busy', 'lock_error', 'write_conflict', 'off', 'mismatch', 'no_endpoint', 'plugin_outdated', 'conflict', 'weak_token', 'not_writable', 'unreadable', 'unsupported'] as $state) {
             $msg = SchedulerWebhook::message($state, ['files' => ['a.yaml']]);
             $this->assertNotSame('', $msg, $state);
             $this->assertDoesNotMatchRegularExpression('/\b(surface|shape)/i', $msg, $state);

@@ -86,8 +86,8 @@ final class AgentBootstrap
      */
     public function cronStatus(): ?array
     {
-        $autoload = $this->guardDir . '/src/autoload.php';
-        if (!is_file($autoload)) {
+        $autoload = $this->activeAutoload();
+        if ($autoload === null) {
             return null;
         }
         require_once $autoload;
@@ -134,6 +134,20 @@ final class AgentBootstrap
         }
 
         return null;
+    }
+
+    /**
+     * The autoloader of the release the agent is running, the only one this
+     * class ever registers. Resolved by SchedulerWebhook::resolveAgentAutoload()
+     * (the `current` link or `current.pointer`, contained in _guard/, else the
+     * flat tree), so the scheduler check, the cron probe and the state reader
+     * all load the same classes. Registering the flat tree's loader here while
+     * the check used a self-updated release's would let the superseded copy
+     * of a class win.
+     */
+    private function activeAutoload(): ?string
+    {
+        return SchedulerWebhook::resolveAgentAutoload($this->gravRoot);
     }
 
     /**
@@ -259,8 +273,8 @@ final class AgentBootstrap
      */
     private function stateInt(string $key): ?int
     {
-        $autoload = $this->guardDir . '/src/autoload.php';
-        if (!is_file($autoload)) {
+        $autoload = $this->activeAutoload();
+        if ($autoload === null) {
             return null;
         }
         require_once $autoload;
@@ -588,7 +602,11 @@ final class AgentBootstrap
      */
     private function loadAgentClasses(): array
     {
-        require_once $this->guardDir . '/src/autoload.php';
+        $autoload = $this->activeAutoload();
+        if ($autoload === null) {
+            throw new BootstrapException('The unpacked release is missing expected files.');
+        }
+        require_once $autoload;
 
         $classes = [
             '\\GravGuard\\Agent\\Crypto\\KeyStorage',
