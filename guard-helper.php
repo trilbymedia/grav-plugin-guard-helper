@@ -226,6 +226,7 @@ class GuardHelperPlugin extends Plugin
         // admin session is not a frontend session, so that only bounced.
         $twig->twig_vars['guard_setup_url'] = $this->absoluteUrl($this->adminRoute());
         $twig->twig_vars['guard_signup_url'] = $this->signupUrl();
+        $twig->twig_vars['guard_signup_host'] = $this->signupHost();
 
         $widget = ['name' => 'Grav Guard', 'template' => 'dashboard-guard'];
         $widgets = $twig->plugins_hooked_dashboard_widgets_top ?? [];
@@ -443,6 +444,8 @@ class GuardHelperPlugin extends Plugin
      */
     public function handleSchedulerWebhook(): void
     {
+        $this->forgetSession();
+
         $webhook = (array) $this->config->get('scheduler.modern.webhook', []);
         if (empty($webhook['enabled'])) {
             $this->sendJson(403, ['error' => 'Webhook triggers are disabled']);
@@ -474,6 +477,26 @@ class GuardHelperPlugin extends Plugin
         }
 
         $this->sendJson(!empty($result['success']) ? 200 : 400, $result);
+    }
+
+    /**
+     * The webhook is a call from the agent, with no cookie and no use for a
+     * session, but Grav starts one for every request before any plugin runs.
+     * Unless the request brought a session of its own, throw the new one
+     * away so the answer sends no Set-Cookie and leaves no session file.
+     */
+    private function forgetSession(): void
+    {
+        $name = session_name();
+        if (is_string($name) && $name !== '' && isset($_COOKIE[$name])) {
+            return;
+        }
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            @session_destroy();
+        }
+        if (!headers_sent()) {
+            header_remove('Set-Cookie');
+        }
     }
 
     /** @param array<string,mixed> $data */
@@ -593,6 +616,14 @@ class GuardHelperPlugin extends Plugin
     private function signupUrl(): string
     {
         return (string) $this->config->get('plugins.guard-helper.signup_url', 'https://gravguard.com');
+    }
+
+    /** The signup URL's host, for link text: "gravguard.com", or "Guard Cloud" when it has none. */
+    private function signupHost(): string
+    {
+        $host = (string) parse_url($this->signupUrl(), PHP_URL_HOST);
+
+        return $host !== '' ? (string) preg_replace('/^www\./i', '', $host) : 'Guard Cloud';
     }
 
     /**
@@ -1103,10 +1134,10 @@ class GuardHelperPlugin extends Plugin
         // footer otherwise.
         if ($result !== null) {
             $signup = '<div class="signup"><strong>Next:</strong> enter the code in Guard Cloud.
-                No account yet? <a href="' . $e($signupUrl) . '" target="_blank" rel="noopener">Create a free account at gravguard.com</a>.</div>';
+                No account yet? <a href="' . $e($signupUrl) . '" target="_blank" rel="noopener">Create a free account at ' . $e($this->signupHost()) . '</a>.</div>';
         } else {
             $signup = '<p class="muted signup-foot">No Guard Cloud account yet?
-                <a href="' . $e($signupUrl) . '" target="_blank" rel="noopener">Sign up free at gravguard.com</a>.</p>';
+                <a href="' . $e($signupUrl) . '" target="_blank" rel="noopener">Sign up free at ' . $e($this->signupHost()) . '</a>.</p>';
         }
 
         return '<!doctype html><html lang="en"><head><meta charset="utf-8">

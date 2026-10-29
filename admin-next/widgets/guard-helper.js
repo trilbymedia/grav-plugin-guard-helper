@@ -154,7 +154,7 @@ class GuardHelperWidget extends HTMLElement {
 					<div class="lbl">Pairing code</div>
 					<div class="code">${esc(s.result.code)}</div>
 					<p class="muted">Enter it in Guard Cloud → Fleet → Add Site within ${ttlMin} min.</p>
-					<p class="muted signup">No account? <a href="${esc(signup)}" target="_blank" rel="noopener">Sign up free at gravguard.com</a>.</p></div>`;
+					<p class="muted signup">No account? <a href="${esc(signup)}" target="_blank" rel="noopener">Sign up free at ${esc(host(signup))}</a>.</p></div>`;
 			}
 			if (conn === 'unpaired') {
 				return `<div class="card">${head}${head2}
@@ -242,6 +242,11 @@ function ago(unixSeconds) {
 	if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
 	const days = Math.round(hours / 24);
 	return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/** The host of a URL, for link text ("gravguard.com"); "Guard Cloud" when it has none. */
+function host(url) {
+	try { return new URL(url).host.replace(/^www\./i, '') || 'Guard Cloud'; } catch (_) { return 'Guard Cloud'; }
 }
 
 function esc(v) {

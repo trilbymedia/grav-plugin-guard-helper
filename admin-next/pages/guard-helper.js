@@ -371,10 +371,10 @@ class GuardHelperPage extends HTMLElement {
 		const url = s.data?.signup_url || 'https://gravguard.com';
 		if (s.result) {
 			return `<div class="signup"><strong>Next:</strong> enter the code in Guard Cloud.
-				No account yet? <a href="${esc(url)}" target="_blank" rel="noopener">Create a free account at gravguard.com</a>.</div>`;
+				No account yet? <a href="${esc(url)}" target="_blank" rel="noopener">Create a free account at ${esc(host(url))}</a>.</div>`;
 		}
 		return `<p class="muted signup-foot">No Guard Cloud account yet?
-			<a href="${esc(url)}" target="_blank" rel="noopener">Sign up free at gravguard.com</a>.</p>`;
+			<a href="${esc(url)}" target="_blank" rel="noopener">Sign up free at ${esc(host(url))}</a>.</p>`;
 	}
 
 	_body(s) {
@@ -633,6 +633,11 @@ const DATE_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', time
 function formatDate(iso) {
 	const d = new Date(iso);
 	return Number.isNaN(d.getTime()) ? '' : DATE_TIME.format(d);
+}
+
+/** The host of a URL, for link text ("gravguard.com"); "Guard Cloud" when it has none. */
+function host(url) {
+	try { return new URL(url).host.replace(/^www\./i, '') || 'Guard Cloud'; } catch (_) { return 'Guard Cloud'; }
 }
 
 function esc(v) {
