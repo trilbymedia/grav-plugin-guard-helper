@@ -40,6 +40,7 @@ class GuardHelperPlugin extends Plugin
 {
     private const NONCE_ACTION = 'guard-helper-setup';
     private const SLUG = 'guard-helper';
+    private const DEFAULT_SETUP_ROUTE = '/_guard-setup';
 
     /**
      * Guard Shield is parked: the code stays, but it is off and not offered.
@@ -63,6 +64,9 @@ class GuardHelperPlugin extends Plugin
             // Low priority: let core admin add its widgets first so we can slot
             // ours in right after the statistics widget.
             'onAdminDashboard'            => ['onAdminDashboard', -100],
+            // Both admins: classic fires it, and the admin API fires it before
+            // writing a config change from Admin Next.
+            'onAdminSave'                 => ['onAdminSave', 0],
 
             // Admin2 / API. These MUST be registered unconditionally — never
             // gate them on isAdmin() in onPluginsInitialized, because the API's
@@ -235,6 +239,52 @@ class GuardHelperPlugin extends Plugin
         }
 
         $twig->plugins_hooked_dashboard_widgets_top = $widgets;
+    }
+
+    /**
+     * Check Guard Helper's own settings before they are written.
+     *
+     * The admin API does not validate a plugin's settings against its
+     * blueprint, so a setup route of "/" saved from Admin Next would be
+     * written as is (the plugin then ignores it, see frontendRoute(), but the
+     * form would keep showing it). Refused here with the reason; the classic
+     * admin validates the blueprint's pattern before it gets this far.
+     */
+    public function onAdminSave(Event $event): void
+    {
+        $obj = $event['object'] ?? null;
+        if (!$this->isOwnConfig($obj)) {
+            return;
+        }
+
+        $route = $obj->get('setup_route');
+        if ($route !== null) {
+            $problem = $this->setupRouteProblem(self::route($route, '/'));
+            if ($problem !== null) {
+                $refusal = '\\Grav\\Plugin\\Api\\Exceptions\\ValidationException';
+                if (class_exists($refusal)) {
+                    throw new $refusal($problem, [['field' => 'setup_route', 'message' => $problem]]);
+                }
+                // No admin API to refuse through: keep the site's home page safe.
+                $obj->set('setup_route', self::DEFAULT_SETUP_ROUTE);
+            }
+        }
+    }
+
+    /** Is this object Guard Helper's own config (user/config or an env folder)? */
+    private function isOwnConfig($obj): bool
+    {
+        if (!is_object($obj) || !method_exists($obj, 'file') || !method_exists($obj, 'get')) {
+            return false;
+        }
+        try {
+            $file = $obj->file();
+        } catch (\Throwable $e) {
+            return false;
+        }
+        $name = is_object($file) && method_exists($file, 'filename') ? str_replace('\\', '/', (string) $file->filename()) : '';
+
+        return $name !== '' && substr($name, -strlen('/config/plugins/' . self::SLUG . '.yaml')) === '/config/plugins/' . self::SLUG . '.yaml';
     }
 
     // ── Admin2 / API ───────────────────────────────────────────────────────
@@ -529,9 +579,40 @@ class GuardHelperPlugin extends Plugin
         return (string) $this->config->get('plugins.guard-helper.signup_url', 'https://gravguard.com');
     }
 
+    /**
+     * The frontend setup route. An empty or "/" setting used to turn the home
+     * page into the setup page, which redirected every visitor to the admin;
+     * a route inside the admin or the API would take over one of their pages.
+     * Any of those, or a route with characters a URL path can't carry, falls
+     * back to DEFAULT_SETUP_ROUTE.
+     */
     private function frontendRoute(): string
     {
-        return rtrim('/' . trim((string) $this->config->get('plugins.guard-helper.setup_route', '/_guard-setup'), '/'), '/');
+        $route = self::route($this->config->get('plugins.guard-helper.setup_route'), '/');
+
+        return $this->setupRouteProblem($route) === null ? $route : self::DEFAULT_SETUP_ROUTE;
+    }
+
+    /** Why $route can't be the setup route, or null when it can. */
+    private function setupRouteProblem(string $route): ?string
+    {
+        if ($route === '' || $route === '/') {
+            return 'The setup page route can\'t be the home page (/). Use a route of its own, for example ' . self::DEFAULT_SETUP_ROUTE . '.';
+        }
+        if (!preg_match('#^(/[A-Za-z0-9._~-]+)+$#', $route)) {
+            return 'The setup page route has to start with / and use only letters, numbers and . _ ~ -, for example ' . self::DEFAULT_SETUP_ROUTE . '.';
+        }
+        foreach ([
+            self::route($this->config->get('plugins.admin.route'), '/admin'),
+            self::route($this->config->get('plugins.admin2.route'), '/admin'),
+            self::route($this->config->get('plugins.api.route'), '/api'),
+        ] as $taken) {
+            if (strcasecmp($route, $taken) === 0 || stripos($route, $taken . '/') === 0) {
+                return "The setup page route can't be inside $taken, which the admin uses.";
+            }
+        }
+
+        return null;
     }
 
     /** The classic admin's Guard page (its admin-menu entry): /admin/guard-helper. */

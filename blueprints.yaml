@@ -51,8 +51,12 @@ form:
     setup_route:
       type: text
       label: Setup page route
-      help: Frontend route serving the browser-only agent setup page (super-admin only).
+      help: Frontend route serving the browser-only agent setup page (super-admin only). It can't be the home page or a route inside the admin.
       default: '/_guard-setup'
+      validate:
+        required: true
+        pattern: '(\/[A-Za-z0-9._~\-]+)+'
+        message: 'Enter a route that starts with / and names its own page, for example /_guard-setup. The home page (/) is not allowed.'
     signup_url:
       type: text
       label: Guard Cloud signup URL
