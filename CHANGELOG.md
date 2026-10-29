@@ -1,3 +1,9 @@
+# v0.2.0-beta.9
+## 10/29/2026
+
+1. [](#improved)
+    * Guard Cloud moved to `https://cloud.gravguard.com`, and gravguard.com is now the marketing site. The default Guard Cloud URL is the new host, and a site whose saved settings still hold the old default (`https://gravguard.com`) uses the new host too, so pairing, agent downloads, the advisory feed and Shield rules keep working without anyone editing the plugin settings. The signup link still points at gravguard.com
+
 # v0.2.0-beta.8
 ## 10/29/2026
 

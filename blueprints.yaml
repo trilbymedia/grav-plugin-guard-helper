@@ -2,7 +2,7 @@ name: Guard Helper
 slug: guard-helper
 type: plugin
 testing: true
-version: 0.2.0-beta.8
+version: 0.2.0-beta.9
 description: Optional companion plugin for Grav Guard — browser-based agent setup, an in-admin health checker, and SSO token consumption. The Guard control channel never depends on this plugin.
 icon: shield
 author:
@@ -47,7 +47,7 @@ form:
       type: text
       label: Guard Cloud URL
       help: Trust-critical — the signed agent release is downloaded from here and the site pairs with it.
-      default: 'https://gravguard.com'
+      default: 'https://cloud.gravguard.com'
     setup_route:
       type: text
       label: Setup page route

@@ -3,7 +3,7 @@ enabled: false
 # Guard Cloud base URL the agent is downloaded from and pairs with. This is
 # trust-critical (the signed release is fetched from here), so it's set in
 # config only — never accepted from a request.
-cloud_url: 'https://gravguard.com'
+cloud_url: 'https://cloud.gravguard.com'
 
 # Frontend route that serves the browser-only agent setup page (super-admin only).
 setup_route: '/_guard-setup'

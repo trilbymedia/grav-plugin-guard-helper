@@ -10,6 +10,7 @@ use Grav\Plugin\Api\Exceptions\ValidationException;
 use Grav\Plugin\Api\Response\ApiResponse;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\CloudUrl;
 use Grav\Plugin\GuardHelper\LookupCache;
 use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use Grav\Plugin\GuardHelper\Security\SecurityChecker;
@@ -260,7 +261,7 @@ class GuardController extends AbstractApiController
 
     private function cloudUrl(): string
     {
-        return (string) $this->config->get('plugins.guard-helper.cloud_url', 'https://gravguard.com');
+        return CloudUrl::from($this->config->get('plugins.guard-helper.cloud_url'));
     }
 
     private function signupUrl(): string

@@ -610,7 +610,7 @@ class GuardHelperPlugin extends Plugin
 
     private function cloudUrl(): string
     {
-        return (string) $this->config->get('plugins.guard-helper.cloud_url', 'https://gravguard.com');
+        return CloudUrl::from($this->config->get('plugins.guard-helper.cloud_url'));
     }
 
     private function signupUrl(): string
