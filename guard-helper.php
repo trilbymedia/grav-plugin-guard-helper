@@ -333,7 +333,9 @@ class GuardHelperPlugin extends Plugin
         try {
             $feedUrl = rtrim($this->cloudUrl(), '/') . '/feed/advisories.json';
             $result = (new \Grav\Plugin\GuardHelper\Security\SecurityChecker($this->grav))->run($feedUrl);
-            $count = count($result['findings']);
+            // An unknown result (the feed could not be fetched) raises no
+            // banner: there is nothing to report, and the Guard page says so.
+            $count = $result['status'] === 'ok' ? count($result['findings']) : 0;
             if ($count > 0) {
                 $notifications['top'][] = [
                     'id'             => 'guard-helper-vulns',

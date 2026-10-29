@@ -6,6 +6,7 @@ namespace Grav\Plugin\GuardHelper\Security;
 
 use Grav\Common\Grav;
 use Grav\Common\Yaml;
+use Grav\Plugin\GuardHelper\LookupCache;
 
 /**
  * The free in-admin security checker (plan §9.1 exposure ladder). Reads the
@@ -14,40 +15,43 @@ use Grav\Common\Yaml;
  * account, no agent required. This is the funnel: the value is visible before
  * anyone pairs a site.
  *
- * The feed is cached (the public feed changes slowly); matching is local, so a
- * site's package list never leaves the box for the free check.
+ * The feed is cached (see AdvisoryFeed); matching is local, so a site's package
+ * list never leaves the box for the free check.
  */
 final class SecurityChecker
 {
-    private const CACHE_KEY = 'guard-gravsec-feed';
-    private const CACHE_TTL = 3600;
-
     private Grav $grav;
+    private ?LookupCache $cache;
 
-    public function __construct(Grav $grav)
+    public function __construct(Grav $grav, ?LookupCache $cache = null)
     {
         $this->grav = $grav;
+        $this->cache = $cache;
     }
 
     /**
      * Run the check against the public feed at $feedUrl.
      *
-     * @return array{checked_at:string, package_count:int, advisory_count:int, findings:array<int,array<string,mixed>>}
+     * `status` is "ok" when the feed was read (findings may still be empty:
+     * the site is clean), or "unknown" when it could not be, in which case
+     * nothing was checked and `findings` is empty for that reason alone.
+     *
+     * @param bool $refresh fetch the feed even when a fresh copy is stored
+     * @return array{status:string, checked_at:string, package_count:int, advisory_count:?int, findings:array<int,array<string,mixed>>}
      */
-    public function run(string $feedUrl): array
+    public function run(string $feedUrl, bool $refresh = false): array
     {
         $installed = $this->installedPackages();
-        $advisories = $this->fetchFeed($feedUrl);
-        $findings = self::match($installed, $advisories);
+        $feed = (new AdvisoryFeed($feedUrl, $this->cache ?? LookupCache::forGrav($this->grav)))->load($refresh);
 
         return [
-            'checked_at' => gmdate('c'),
+            'status' => $feed['ok'] ? 'ok' : 'unknown',
+            'checked_at' => gmdate('c', $feed['checked_at']),
             'package_count' => count($installed),
-            'advisory_count' => count($advisories),
-            'findings' => $findings,
+            'advisory_count' => $feed['ok'] ? count($feed['advisories']) : null,
+            'findings' => $feed['ok'] ? self::match($installed, $feed['advisories']) : [],
         ];
     }
-
     /**
      * Match installed packages against advisories. Pure — the testable core.
      *
@@ -114,64 +118,5 @@ final class SecurityChecker
         }
 
         return $out;
-    }
-
-    /**
-     * Fetch + cache the public advisory feed. Failures (offline, malformed)
-     * degrade to an empty feed — the checker just reports nothing, never errors.
-     *
-     * @return array<int,array<string,mixed>>
-     */
-    private function fetchFeed(string $url): array
-    {
-        $cache = $this->grav['cache'];
-        $cached = $cache->fetch(self::CACHE_KEY);
-        if (is_array($cached)) {
-            return $cached;
-        }
-
-        $advisories = [];
-        $raw = $this->httpGet($url);
-        if ($raw !== null) {
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded) && is_array($decoded['advisories'] ?? null)) {
-                $advisories = $decoded['advisories'];
-            }
-        }
-
-        $cache->save(self::CACHE_KEY, $advisories, self::CACHE_TTL);
-
-        return $advisories;
-    }
-
-    /**
-     * Bounded: this runs on the Admin Next dashboard's notifications call, so
-     * a cloud that does not answer may cost it a couple of seconds, not eight.
-     */
-    private function httpGet(string $url): ?string
-    {
-        if (extension_loaded('curl')) {
-            $ch = curl_init($url);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_CONNECTTIMEOUT => 2,
-                CURLOPT_TIMEOUT => 4,
-                CURLOPT_USERAGENT => 'GuardHelper',
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_SSL_VERIFYHOST => 2,
-            ]);
-            $body = curl_exec($ch);
-            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-
-            return ($body !== false && $status >= 200 && $status < 300) ? (string) $body : null;
-        }
-
-        $context = stream_context_create([
-            'http' => ['timeout' => 4, 'header' => "User-Agent: GuardHelper\r\n"],
-            'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
-        ]);
-        $body = @file_get_contents($url, false, $context);
-
-        return $body === false ? null : $body;
     }
 }

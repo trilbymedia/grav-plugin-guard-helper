@@ -185,13 +185,16 @@ class GuardController extends AbstractApiController
     /**
      * GET /guard-helper/security — the free in-admin checker. Matches this
      * site's installed versions against the public GravSec feed; package list
-     * never leaves the box.
+     * never leaves the box. `?refresh=1` fetches the feed even when a copy is
+     * stored ("Check again"). `status` is "unknown" when the feed could not
+     * be fetched: nothing was checked, which is not the same as no findings.
      */
     public function security(ServerRequestInterface $request): ResponseInterface
     {
         $this->requireSuperAdmin($request);
 
-        $result = (new SecurityChecker($this->grav))->run($this->feedUrl());
+        $refresh = !empty($request->getQueryParams()['refresh']);
+        $result = (new SecurityChecker($this->grav))->run($this->feedUrl(), $refresh);
         $result['cloud_url'] = $this->cloudUrl();
 
         return ApiResponse::create($result);
