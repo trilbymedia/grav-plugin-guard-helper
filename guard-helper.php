@@ -211,7 +211,9 @@ class GuardHelperPlugin extends Plugin
         $twig = $this->grav['twig'];
         $twig->twig_vars['guard_installed'] = $boot->isInstalled();
         $twig->twig_vars['guard_endpoint'] = $this->absoluteUrl($boot->endpointPath());
-        $twig->twig_vars['guard_setup_url'] = $this->absoluteUrl($this->frontendRoute());
+        // The classic admin's Guard page, not the frontend setup route: an
+        // admin session is not a frontend session, so that only bounced.
+        $twig->twig_vars['guard_setup_url'] = $this->absoluteUrl($this->adminRoute());
         $twig->twig_vars['guard_signup_url'] = $this->signupUrl();
 
         $widget = ['name' => 'Grav Guard', 'template' => 'dashboard-guard'];
@@ -326,7 +328,9 @@ class GuardHelperPlugin extends Plugin
                 'reappear_after' => '+1 week',
                 'action'         => [
                     'label' => 'Set up',
-                    'url'   => $this->absoluteUrl($this->frontendRoute()),
+                    // The Guard page in Admin Next, not the frontend setup
+                    // route: an Admin Next session is not a frontend session.
+                    'url'   => $this->absoluteUrl($this->adminNextRoute()),
                 ],
             ];
         }
@@ -524,11 +528,24 @@ class GuardHelperPlugin extends Plugin
         return rtrim('/' . trim((string) $this->config->get('plugins.guard-helper.setup_route', '/_guard-setup'), '/'), '/');
     }
 
+    /** The classic admin's Guard page (its admin-menu entry): /admin/guard-helper. */
     private function adminRoute(): string
     {
-        $base = rtrim((string) $this->config->get('plugins.admin.route', '/admin'), '/');
+        return rtrim(self::route($this->config->get('plugins.admin.route'), '/admin'), '/') . '/' . self::SLUG;
+    }
 
-        return $base . '/' . self::SLUG;
+    /** Admin Next's Guard page (its sidebar item): /admin/plugin/guard-helper. */
+    private function adminNextRoute(): string
+    {
+        return rtrim(self::route($this->config->get('plugins.admin2.route'), '/admin'), '/') . '/plugin/' . self::SLUG;
+    }
+
+    /** A configured route as "/x/y", or $default when none is set. */
+    private static function route($configured, string $default): string
+    {
+        $route = trim((string) $configured, " \t/");
+
+        return $route === '' ? $default : '/' . $route;
     }
 
     private function absoluteUrl(string $path): string
