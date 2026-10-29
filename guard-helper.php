@@ -459,7 +459,13 @@ class GuardHelperPlugin extends Plugin
     {
         $user = $this->grav['user'] ?? null;
         if (!SuperAdmin::check($user)) {
-            $this->grav->redirect('/admin', 302);
+            // To the Guard page in the site's admin (configured route), so a
+            // super-admin who logs in there lands where they meant to go.
+            // Someone already on that page (a logged-in admin who is not a
+            // super-admin) goes to the admin itself instead of round in a loop.
+            $path = rtrim($this->grav['uri']->path(), '/');
+            $target = $this->guardAdminRoute();
+            $this->grav->redirect($path === $target ? $this->adminBase() : $target, 302);
 
             return;
         }
@@ -538,6 +544,25 @@ class GuardHelperPlugin extends Plugin
     private function adminNextRoute(): string
     {
         return rtrim(self::route($this->config->get('plugins.admin2.route'), '/admin'), '/') . '/plugin/' . self::SLUG;
+    }
+
+    /**
+     * Where the Guard page lives on this site: the classic admin's when that
+     * admin is enabled (Grav 1.7), otherwise Admin Next's. Admin sessions are
+     * not frontend sessions, so links from inside an admin go here rather
+     * than to the frontend setup route, which would only bounce them.
+     */
+    private function guardAdminRoute(): string
+    {
+        return $this->config->get('plugins.admin.enabled') ? $this->adminRoute() : $this->adminNextRoute();
+    }
+
+    /** The configured admin route itself (classic when enabled, else Admin Next). */
+    private function adminBase(): string
+    {
+        return $this->config->get('plugins.admin.enabled')
+            ? self::route($this->config->get('plugins.admin.route'), '/admin')
+            : self::route($this->config->get('plugins.admin2.route'), '/admin');
     }
 
     /** A configured route as "/x/y", or $default when none is set. */
