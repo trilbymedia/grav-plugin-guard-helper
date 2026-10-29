@@ -342,6 +342,48 @@ final class AgentBootstrap
     }
 
     /**
+     * Has this agent been paired with Guard Cloud? True once Guard Cloud has
+     * claimed a pairing code (the agent then holds the cloud's key).
+     *
+     * @return bool|null null when it can't be told (no agent, or its state
+     *   can't be read)
+     */
+    public function isPaired(): ?bool
+    {
+        if (!$this->isInstalled()) {
+            return null;
+        }
+        $key = $this->stateValue('keyring.cloud.default');
+
+        return $key === false ? null : ($key !== null && $key !== '');
+    }
+
+    /**
+     * Where this site stands with Guard Cloud, in the three states every
+     * screen shows the same way:
+     *
+     *   not_installed — no agent yet
+     *   unpaired      — installed, but no pairing code has been entered in
+     *                   Guard Cloud (also when pairing can't be read and Guard
+     *                   Cloud has never reached the site)
+     *   waiting       — paired, but Guard Cloud hasn't reached the site yet
+     *   connected     — paired, and Guard Cloud has reached the site
+     */
+    public function connectionState(): string
+    {
+        if (!$this->isInstalled()) {
+            return 'not_installed';
+        }
+        $paired = $this->isPaired();
+        $reached = (bool) ($this->deliveryStatus()['reachable'] ?? false);
+        if ($paired === false || ($paired === null && !$reached)) {
+            return 'unpaired';
+        }
+
+        return $reached ? 'connected' : 'waiting';
+    }
+
+    /**
      * Read one key from the agent's state DB.
      *
      * The DB has a randomized filename (so it stays unfetchable even where
@@ -351,20 +393,31 @@ final class AgentBootstrap
      */
     private function stateInt(string $key): ?int
     {
+        $value = $this->stateValue($key);
+
+        return ($value === null || $value === false || $value === '') ? null : (int) $value;
+    }
+
+    /**
+     * @return string|null|false the stored value (null when not set), or
+     *   false when the state DB can't be read at all
+     */
+    private function stateValue(string $key)
+    {
         $autoload = $this->activeAutoload();
         if ($autoload === null) {
-            return null;
+            return false;
         }
         require_once $autoload;
         if (!class_exists(\GravGuard\Agent\State\StateStore::class)) {
-            return null;
+            return false;
         }
 
         $config = @include $this->guardDir . '/data/config.php';
         $db = (is_array($config) && !empty($config['db'])) ? (string)$config['db'] : 'agent.db';
         $path = $this->guardDir . '/data/' . $db;
         if (!is_file($path)) {
-            return null;
+            return false;
         }
 
         try {
@@ -372,10 +425,10 @@ final class AgentBootstrap
         } catch (\Throwable $e) {
             // A locked or unreadable state DB is not worth failing the page
             // over — the screen just shows "not seen yet".
-            return null;
+            return false;
         }
 
-        return ($value === null || $value === '') ? null : (int)$value;
+        return $value === null ? null : (string) $value;
     }
 
     /**

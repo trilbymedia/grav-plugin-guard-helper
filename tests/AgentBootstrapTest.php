@@ -270,6 +270,40 @@ final class AgentBootstrapTest extends TestCase
     }
 
     /**
+     * The three states every screen shows: installed but not paired, paired
+     * but not reached yet, and connected. Read from the agent's own state.
+     */
+    public function testConnectionStateFollowsPairingAndDelivery(): void
+    {
+        $agentSrc = realpath(__DIR__ . '/../../agent');
+        if ($agentSrc === false || !is_file($agentSrc . '/agent.php')) {
+            $this->markTestSkipped('agent source not available beside the helper repo');
+        }
+
+        $empty = new AgentBootstrap($this->gravRoot);
+        $this->assertSame('not_installed', $empty->connectionState());
+        $this->assertNull($empty->isPaired());
+
+        [$descriptor, $zip] = $this->release($this->agentFiles($agentSrc));
+        $boot = $this->boot($this->serving($descriptor, $zip));
+        $boot->install('https://cloud.test');
+        $this->assertFalse($boot->isPaired());
+        $this->assertSame('unpaired', $boot->connectionState(), 'a pairing code alone is not a pairing');
+
+        $cfg = include $this->gravRoot . '/_guard/data/config.php';
+        $state = new \GravGuard\Agent\State\StateStore($this->gravRoot . '/_guard/data/' . $cfg['db']);
+        $state->set('keyring.cloud.default', str_repeat('ab', 32));
+        $this->assertTrue($boot->isPaired());
+        $this->assertSame('waiting', $boot->connectionState());
+
+        $state->set('delivery.last_tick_at', (string) time());
+        $this->assertSame('connected', $boot->connectionState());
+
+        $state->set('keyring.cloud.default', '');
+        $this->assertSame('unpaired', $boot->connectionState(), 'unpaired again after Guard Cloud lets the site go');
+    }
+
+    /**
      * Agents installed before 1.0.4 have no site_url, and their bin/pair
      * ignores --site-url. "Show pairing code" (repair) is how they get one:
      * it writes the URL into the existing config and leaves everything else,

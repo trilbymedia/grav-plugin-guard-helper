@@ -79,6 +79,9 @@ class GuardController extends AbstractApiController
             // is what the screen leads with; cron is one way of achieving it,
             // not the question itself.
             'delivery'      => $boot->deliveryStatus(),
+            // not_installed | unpaired | waiting | connected: the one answer
+            // the page header, the dashboard widget and the help text all use.
+            'connection'    => $boot->connectionState(),
             // Whether Guard Cloud can run this site's scheduled jobs on a host
             // where the agent cannot start Grav. Only asked once there is an
             // agent to use it. Never carries the token.

@@ -114,7 +114,13 @@ class GuardHelperPage extends HTMLElement {
 		this._patch({ busy: true, error: null });
 		try {
 			const result = await this._api('POST', '/guard-helper/setup', {});
-			this._patch({ busy: false, result, data: { ...(this._state.data || {}), installed: true, webhook: result.webhook ?? null } });
+			// justInstalled is decided here, before `installed` flips, so the
+			// header can say "installed, pairing started" rather than claiming
+			// a connection that doesn't exist yet.
+			this._patch({
+				busy: false, result, justInstalled: true,
+				data: { ...(this._state.data || {}), installed: true, connection: 'unpaired', webhook: result.webhook ?? null },
+			});
 		} catch (e) {
 			this._patch({ busy: false, error: e.message });
 		}
@@ -180,44 +186,45 @@ class GuardHelperPage extends HTMLElement {
 			</div></div>`;
 	}
 
-	// "Is Guard Cloud reaching this site?" is the only question worth putting in
-	// front of someone here, and it is answerable: the agent stamps every
-	// verified inbound command and every completed mailbox poll. Whether a
-	// crontab exists is a detail of HOW work arrives, so it belongs behind a
-	// disclosure, not in the reader's face.
+	// Where this site stands with Guard Cloud, from the status call's
+	// `connection`: one answer for the header, its help line and the widget.
 	//
-	// Deliberately not a freshness threshold. Pushes are work-driven, so an
-	// idle site can legitimately go days without one, and "no contact in 24h"
-	// would cry wolf on a perfectly healthy install.
-	_delivery(s) {
-		const d = s.data?.delivery;
-		if (!d) return '';
-
-		if (!d.reachable) {
-			return `<div class="status-row warn-row">
-				<span class="dot"></span>
-				<div>
-					<strong>Guard Cloud has not reached this site yet.</strong>
-					<p class="hint">This is expected until you finish pairing. Once the site is added in
-					Guard Cloud, work is delivered over HTTPS to the agent endpoint automatically — there
-					is nothing to install.</p>
-				</div>
-			</div>`;
+	//   unpaired  — installed, no pairing code entered in Guard Cloud yet
+	//   waiting   — paired, Guard Cloud hasn't reached the site yet
+	//   connected — paired and reached
+	//
+	// "Connected" is deliberately "has ever been reached", not a freshness
+	// threshold. Pushes are work-driven, so an idle site can go days without
+	// one, and "no contact in 24h" would cry wolf on a healthy install.
+	_connection(s) {
+		const conn = s.data?.connection || 'unpaired';
+		if (s.justInstalled && conn === 'unpaired') {
+			return {
+				tone: 'off', title: 'Guard Agent installed, pairing started',
+				help: 'Enter the pairing code below in Guard Cloud → Fleet → Add Site to add this site to your fleet.',
+			};
 		}
-
-		const seen = Math.max(d.last_tick_at || 0, d.last_push_at || 0);
-		const how = d.channel === 'tick'
-			? 'The agent is checking in on a schedule'
-			: 'Guard Cloud is delivering work straight to this site';
-
-		return `<div class="status-row ok-row">
-			<span class="dot"></span>
-			<div>
-				<strong>Guard Cloud is reaching this site.</strong>
-				<p class="hint">${how} — last contact ${esc(ago(seen))}. Scheduled backups, updates
-				and offsite uploads are being delivered.</p>
-			</div>
-		</div>`;
+		if (conn === 'connected') {
+			const d = s.data?.delivery || {};
+			const seen = Math.max(d.last_tick_at || 0, d.last_push_at || 0);
+			const how = d.channel === 'tick'
+				? 'The agent checks in with Guard Cloud on a schedule'
+				: 'Guard Cloud delivers work straight to this site';
+			return {
+				tone: 'ok', title: 'Connected to Guard Cloud',
+				help: `${how}; last contact ${ago(seen)}. Scheduled backups, updates and offsite uploads are being delivered.`,
+			};
+		}
+		if (conn === 'waiting') {
+			return {
+				tone: 'off', title: 'Paired, waiting for Guard Cloud',
+				help: 'Guard Cloud accepted the pairing but hasn\'t contacted this site yet. Work arrives over HTTPS at the agent endpoint below, usually within a few minutes; there is nothing else to install.',
+			};
+		}
+		return {
+			tone: 'off', title: 'Installed, not paired yet',
+			help: 'To add this site to your fleet, generate a pairing code and enter it in Guard Cloud → Fleet → Add Site. Codes are single-use and expire after 15 minutes.',
+		};
 	}
 
 	// The advanced path, collapsed by default. Adding a cron makes work arrive
@@ -327,11 +334,20 @@ class GuardHelperPage extends HTMLElement {
 		return `<div class="vers">${plugin}${agent}</div>`;
 	}
 
-	/** Button and code in one place — the code used to render far above it. */
+	/**
+	 * Button and code in one place — the code used to render far above it.
+	 * Until the site is paired this is the screen's main action; after that
+	 * it is only for adding the site to Guard Cloud again.
+	 */
 	_pairing(s) {
-		const btn = `<button id="repair-btn" class="btn ghost" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button>`;
+		const paired = ['waiting', 'connected'].includes(s.data?.connection);
+		const label = s.busy ? 'Working…' : (paired ? 'Show a new pairing code' : 'Show pairing code');
+		const btn = `<button id="repair-btn" class="btn${paired ? ' ghost' : ''}" ${s.busy ? 'disabled' : ''}>${label}</button>`;
+		const note = paired && !s.result
+			? `<p class="hint">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>`
+			: '';
 		if (!s.result) {
-			return `<div class="pair-block">${btn}</div>`;
+			return `<div class="pair-block">${btn}${note}</div>`;
 		}
 		const ttlMin = Math.round((s.result.ttl || 0) / 60);
 		return `<div class="pair-block">
@@ -439,13 +455,12 @@ class GuardHelperPage extends HTMLElement {
 		// meant the code rendered in a different place from the button that
 		// produced it, which reads as though something else happened.
 		if (s.data?.installed || s.result) {
-			const justInstalled = !!s.result && !s.data?.installed;
+			const c = this._connection(s);
 			return `<div class="card">
-				<div class="status ok"><span class="dot"></span> ${justInstalled ? 'Guard Agent installed — pairing started' : 'Guard Agent is active'}</div>
+				<div class="status ${c.tone}"><span class="dot"></span> ${esc(c.title)}</div>
 				${this._versions(s)}
-				<p class="muted">Installed and ready. To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it's single-use).</p>
+				<p class="muted">${esc(c.help)}</p>
 				${this._codeRow('Agent endpoint', s.data?.endpoint || s.result?.endpoint || s.data?.endpoint_path || '')}
-				${this._delivery(s)}
 				${this._webhook(s)}
 				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}

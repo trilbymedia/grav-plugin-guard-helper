@@ -214,6 +214,10 @@ class GuardHelperPlugin extends Plugin
         $boot = $this->bootstrap();
         $twig = $this->grav['twig'];
         $twig->twig_vars['guard_installed'] = $boot->isInstalled();
+        // not_installed | unpaired | waiting | connected, as on the Guard page.
+        $twig->twig_vars['guard_connection'] = $boot->connectionState();
+        $delivery = (array) $boot->deliveryStatus();
+        $twig->twig_vars['guard_last_contact'] = self::ago(max((int) ($delivery['last_tick_at'] ?? 0), (int) ($delivery['last_push_at'] ?? 0)));
         $twig->twig_vars['guard_endpoint'] = $this->absoluteUrl($boot->endpointPath());
         // The classic admin's Guard page, not the frontend setup route: an
         // admin session is not a frontend session, so that only bounced.
@@ -549,7 +553,7 @@ class GuardHelperPlugin extends Plugin
                     $site = $this->absoluteUrl('');
                     $result = $action === 'repair'
                         ? $boot->repair($site)
-                        : $boot->install($cloud, $site);
+                        : $boot->install($cloud, $site) + ['just_installed' => true];
                     $webhook = $this->ensureWebhook();
                 } catch (BootstrapException $e) {
                     $error = $e->getMessage();
@@ -671,60 +675,40 @@ class GuardHelperPlugin extends Plugin
     }
 
     /**
-     * The scheduled-task notice, for the no-admin2 setup page.
+     * Where this site stands with Guard Cloud, as the header and help line of
+     * the setup page: the same three states, in the same words, as the Admin
+     * Next page and both dashboard widgets (see AgentBootstrap::connectionState).
      *
-     * This page is the on-ramp for a plain Grav site, and until now it finished
-     * at "agent installed" without ever mentioning that the per-minute tick is
-     * the only thing that collects queued work — so a site could sit here
-     * looking perfectly set up while every scheduled backup and update waited
-     * forever. The admin2 page says this; this one has to as well.
-     *
-     * Returns '' when a tick is already scheduled, and stays quiet about the
-     * distinction between "no cron" and "cannot tell": most managed hosts
-     * disable the spawn functions in the web pool, so from in here we usually
-     * cannot read the crontab, and telling a perfectly healthy site it has no
-     * tick would be worse than saying nothing.
-     */
-    private function cronNotice(AgentBootstrap $boot): string
-    {
-        return $this->deliveryNotice($boot) . $this->cronDetails($boot);
-    }
-
-    /**
-     * The headline: is Guard Cloud reaching this site?
-     *
-     * Green once it has, amber until then. Not a freshness threshold —
-     * pushes are work-driven, so an idle site can legitimately go days
+     * "Connected" is "has ever been reached", not a freshness threshold.
+     * Pushes are work-driven, so an idle site can legitimately go days
      * without one and a timeout would cry wolf on a healthy install.
+     *
+     * @return array{0:string, 1:string, 2:string} [tone (ok|off), title, help]
      */
-    private function deliveryNotice(AgentBootstrap $boot): string
+    private function connectionCopy(AgentBootstrap $boot, bool $justInstalled): array
     {
-        $d = $boot->deliveryStatus();
-        if ($d === null) {
-            return '';
+        $state = $boot->connectionState();
+        if ($justInstalled && $state === 'unpaired') {
+            return ['off', 'Guard Agent installed, pairing started',
+                'Enter the pairing code below in Guard Cloud &rarr; Fleet &rarr; Add Site to add this site to your fleet.'];
+        }
+        if ($state === 'connected') {
+            $d = (array) $boot->deliveryStatus();
+            $seen = max((int) ($d['last_tick_at'] ?? 0), (int) ($d['last_push_at'] ?? 0));
+            $how = ($d['channel'] ?? '') === 'tick'
+                ? 'The agent checks in with Guard Cloud on a schedule'
+                : 'Guard Cloud delivers work straight to this site';
+
+            return ['ok', 'Connected to Guard Cloud',
+                $how . '; last contact ' . self::ago($seen) . '. Scheduled backups, updates and offsite uploads are being delivered.'];
+        }
+        if ($state === 'waiting') {
+            return ['off', 'Paired, waiting for Guard Cloud',
+                'Guard Cloud accepted the pairing but hasn&rsquo;t contacted this site yet. Work arrives over HTTPS at the agent endpoint below, usually within a few minutes; there is nothing else to install.'];
         }
 
-        if (!($d['reachable'] ?? false)) {
-            return '
-                <div class="state amber">
-                    <strong>Guard Cloud has not reached this site yet.</strong>
-                    <p class="muted">Expected until pairing is finished. Once the site is added in Guard
-                    Cloud, work is delivered over HTTPS to the agent endpoint automatically &mdash; there
-                    is nothing to install.</p>
-                </div>';
-        }
-
-        $seen = max((int) ($d['last_tick_at'] ?? 0), (int) ($d['last_push_at'] ?? 0));
-        $how = ($d['channel'] ?? '') === 'tick'
-            ? 'The agent is checking in on a schedule'
-            : 'Guard Cloud is delivering work straight to this site';
-
-        return '
-            <div class="state green">
-                <strong>Guard Cloud is reaching this site.</strong>
-                <p class="muted">' . $how . ' &mdash; last contact ' . self::ago($seen) . '. Scheduled
-                backups, updates and offsite uploads are being delivered.</p>
-            </div>';
+        return ['off', 'Installed, not paired yet',
+            'To add this site to your fleet, generate a pairing code and enter it in Guard Cloud &rarr; Fleet &rarr; Add Site. Codes are single-use and expire after 15 minutes.'];
     }
 
     /**
@@ -1054,19 +1038,24 @@ class GuardHelperPlugin extends Plugin
                     <div class="code">' . $e($result['code']) . '</div>
                 </div>';
 
+            [$tone, $title, $help] = $this->connectionCopy($boot, !empty($result['just_installed']));
+            // Until the site is paired, the pairing code is the page's main
+            // action; after that it is only for adding the site again.
+            $paired = in_array($boot->connectionState(), ['waiting', 'connected'], true);
             $body = '
-                <div class="ok">' . ($result !== null ? 'Guard Agent installed.' : 'The Guard Agent is installed.') . '</div>'
+                <div class="status ' . $tone . '"><span class="dot"></span>' . $title . '</div>'
                 . $this->versionLine($boot, $cloud) . '
+                <p class="muted">' . $help . '</p>
                 <label>Agent endpoint</label>
-                <div class="code">' . $e($endpoint) . '</div>
-                <p class="muted">To add this site to Guard Cloud — or if the last code expired — generate a fresh pairing code (it is single-use).</p>'
-                . $this->cronNotice($boot)
+                <div class="code">' . $e($endpoint) . '</div>'
+                . $this->cronDetails($boot)
                 . $this->webhookNotice($webhook) . '
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
                     <input type="hidden" name="guard-action" value="repair">
-                    <button type="submit">Show pairing code</button>
+                    <button type="submit"' . ($paired ? ' class="secondary"' : '') . '>' . ($paired ? 'Show a new pairing code' : 'Show pairing code') . '</button>
                 </form>'
+                . ($paired && $result === null ? '<p class="muted">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>' : '')
                 . $pairOut
                 . $this->manageLink($cloud);
         } else {
@@ -1130,7 +1119,10 @@ class GuardHelperPlugin extends Plugin
   button.secondary{width:auto;margin-top:10px;padding:8px 14px;font-size:13px;background:transparent;color:var(--fg);border:1px solid var(--border)}
   button.secondary:hover{background:#f4f4f5}
   .muted{color:var(--muted);font-size:13px}
-  .ok{color:var(--ok);font-weight:600;margin-bottom:8px}
+  .status{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:8px}
+  .status .dot{width:9px;height:9px;border-radius:50%}
+  .status.ok{color:#047857}.status.ok .dot{background:var(--ok)}
+  .status.off{color:#b45309}.status.off .dot{background:#d97706}
   .err{background:#fceeee;color:var(--err);border:1px solid #f5c2bd;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:14px}
   .vers{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;font-size:12px;color:var(--muted)}
   .vers b{text-transform:uppercase;letter-spacing:.04em;font-weight:600;margin-right:3px}

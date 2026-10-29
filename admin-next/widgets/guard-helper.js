@@ -86,7 +86,7 @@ class GuardHelperWidget extends HTMLElement {
 		this._patch({ busy: true, error: null });
 		try {
 			const result = await this._api('POST', '/guard-helper/setup', {});
-			this._patch({ busy: false, result, data: { ...(this._state.data || {}), installed: true } });
+			this._patch({ busy: false, result, justInstalled: true, data: { ...(this._state.data || {}), installed: true, connection: 'unpaired' } });
 		} catch (e) {
 			this._patch({ busy: false, error: e.message });
 		}
@@ -115,6 +115,10 @@ class GuardHelperWidget extends HTMLElement {
 		this.shadowRoot.getElementById('setup-btn')?.addEventListener('click', () => this._setup());
 		this.shadowRoot.getElementById('repair-btn')?.addEventListener('click', () => this._repair());
 		this.shadowRoot.getElementById('retry-btn')?.addEventListener('click', () => this._loadStatus());
+		// Move the admin's own router rather than reloading the whole app.
+		this.shadowRoot.querySelector('a.more')?.addEventListener('click', (e) => {
+			if (typeof window.__GRAV_NAVIGATE === 'function') { e.preventDefault(); window.__GRAV_NAVIGATE(pageUrl()); }
+		});
 	}
 
 	_body(s) {
@@ -129,24 +133,45 @@ class GuardHelperWidget extends HTMLElement {
 		}
 
 		const installed = s.result || s.data?.installed;
+		const signup = s.data?.signup_url || 'https://gravguard.com';
 
-		if (s.result) {
-			const ttlMin = Math.round((s.result.ttl || 0) / 60);
-			const signup = s.data?.signup_url || 'https://gravguard.com';
-			return `<div class="card">${head}
-				<div class="ok">● Installed — pairing started</div>
-				<div class="lbl">Pairing code</div>
-				<div class="code">${esc(s.result.code)}</div>
-				<p class="muted">Enter it in Guard Cloud → Fleet → Add Site within ${ttlMin} min.</p>
-				<p class="muted signup">No account? <a href="${esc(signup)}" target="_blank" rel="noopener">Sign up free at gravguard.com</a>.</p></div>`;
-		}
 		if (installed) {
-			return `<div class="card">${head}
-				<div class="ok">● Active</div>
+			// The same three states as the Guard page: not paired yet, paired
+			// but not reached yet, connected.
+			const conn = s.data?.connection || 'unpaired';
+			let state;
+			if (s.justInstalled && conn === 'unpaired') state = ['off', 'Installed, pairing started'];
+			else if (conn === 'connected') state = ['ok', 'Connected to Guard Cloud'];
+			else if (conn === 'waiting') state = ['off', 'Paired, waiting for Guard Cloud'];
+			else state = ['off', 'Installed, not paired yet'];
+
+			const head2 = `<div class="${state[0]}">● ${esc(state[1])}</div>`;
+			const err = s.error ? `<div class="err">${esc(s.error)}</div>` : '';
+
+			if (s.result) {
+				const ttlMin = Math.round((s.result.ttl || 0) / 60);
+				return `<div class="card">${head}${head2}
+					<div class="lbl">Pairing code</div>
+					<div class="code">${esc(s.result.code)}</div>
+					<p class="muted">Enter it in Guard Cloud → Fleet → Add Site within ${ttlMin} min.</p>
+					<p class="muted signup">No account? <a href="${esc(signup)}" target="_blank" rel="noopener">Sign up free at gravguard.com</a>.</p></div>`;
+			}
+			if (conn === 'unpaired') {
+				return `<div class="card">${head}${head2}
+					<p class="muted">Enter a pairing code in Guard Cloud → Fleet → Add Site to add this site to your fleet.</p>
+					${err}
+					<button id="repair-btn" class="btn" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button></div>`;
+			}
+			const d = s.data?.delivery || {};
+			const seen = Math.max(d.last_tick_at || 0, d.last_push_at || 0);
+			const sub = conn === 'connected'
+				? `<p class="muted">Last contact ${esc(ago(seen))}.</p>`
+				: `<p class="muted">Guard Cloud hasn't contacted this site yet; that usually takes a few minutes.</p>`;
+			return `<div class="card">${head}${head2}
+				${sub}
 				<div class="lbl">Endpoint</div>
 				<div class="code">${esc(s.data?.endpoint || s.data?.endpoint_path || '')}</div>
-				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
-				<button id="repair-btn" class="btn ghost" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button></div>`;
+				<a class="more" href="${esc(pageUrl())}">Open the Guard page →</a></div>`;
 		}
 
 		// Only flag the bundled PHP extensions when one is genuinely missing.
@@ -166,6 +191,10 @@ class GuardHelperWidget extends HTMLElement {
 
 	_css() {
 		return `
+		:host { --gh-ok: var(--success, #16a34a); --gh-warn: var(--warning, #d97706); --gh-bad: var(--destructive, #dc2626);
+			--gh-ok-fg: color-mix(in oklab, var(--gh-ok) 74%, var(--foreground, #09090b));
+			--gh-warn-fg: color-mix(in oklab, var(--gh-warn) 62%, var(--foreground, #09090b));
+			--gh-bad-fg: color-mix(in oklab, var(--gh-bad) 55%, var(--foreground, #09090b)); }
 		:host { display:block; height:100%; }
 		.card { display:flex; flex-direction:column; gap:8px; height:100%; box-sizing:border-box;
 			padding:16px; border:1px solid var(--border,#e4e4e7); border-radius:12px;
@@ -177,15 +206,17 @@ class GuardHelperWidget extends HTMLElement {
 		.lbl { font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.03em;
 			color:var(--muted-foreground,#71717a); margin-top:2px; }
 		.muted { color:var(--muted-foreground,#71717a); margin:0; }
-		.ok { color:#16a34a; font-weight:600; }
-		.off { color:#d97706; font-weight:600; }
+		.ok { color:var(--gh-ok-fg); font-weight:600; }
+		.off { color:var(--gh-warn-fg); font-weight:600; }
+		.more { margin-top:auto; color:var(--primary,#2463eb); font-weight:600; text-decoration:none; font-size:12px; }
+		.more:hover { text-decoration:underline; }
 		.signup { font-size:12px; } .signup a { color:var(--primary,#2463eb); font-weight:600; }
 		.code { font-family:ui-monospace,Menlo,monospace; word-break:break-all;
 			background:var(--muted,#f4f4f5); border:1px solid var(--border,#e4e4e7);
 			border-radius:6px; padding:8px 10px; font-size:12px; }
-		.err { color:#dc2626; background:color-mix(in oklab,#dc2626 10%,transparent);
-			border:1px solid color-mix(in oklab,#dc2626 30%,transparent); border-radius:6px; padding:8px 10px; }
-		.warn { color:#d97706; font-size:12px; }
+		.err { color:var(--gh-bad-fg); background:color-mix(in oklab,var(--gh-bad) 10%,transparent);
+			border:1px solid color-mix(in oklab,var(--gh-bad) 30%,transparent); border-radius:6px; padding:8px 10px; }
+		.warn { color:var(--gh-warn-fg); font-size:12px; }
 		.btn { margin-top:auto; border:0; border-radius:8px; padding:10px; font-weight:600; font-size:13px;
 			cursor:pointer; background:var(--primary,#2463eb); color:var(--primary-foreground,#fff); }
 		.btn:hover:not(:disabled) { filter:brightness(1.05); }
@@ -193,6 +224,24 @@ class GuardHelperWidget extends HTMLElement {
 		.btn.ghost { background:transparent; color:var(--foreground,#09090b);
 			border:1px solid var(--border,#e4e4e7); margin-top:0; }`;
 	}
+}
+
+/** The Guard page in Admin Next. */
+function pageUrl() {
+	return (window.__GRAV_ADMIN_BASE || '/admin').replace(/\/$/, '') + '/plugin/guard-helper';
+}
+
+// Coarse on purpose: "recently" vs "a while ago", not a precise figure.
+function ago(unixSeconds) {
+	if (!unixSeconds) return 'never';
+	const secs = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);
+	if (secs < 90) return 'just now';
+	const mins = Math.round(secs / 60);
+	if (mins < 60) return `${mins} minutes ago`;
+	const hours = Math.round(mins / 60);
+	if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+	const days = Math.round(hours / 24);
+	return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 function esc(v) {
