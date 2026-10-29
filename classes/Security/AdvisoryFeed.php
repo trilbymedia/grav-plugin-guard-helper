@@ -56,14 +56,41 @@ final class AdvisoryFeed
      */
     public function load(bool $refresh = false): array
     {
-        $key = 'advisory-feed|' . $this->url;
-        $entry = $refresh ? null : $this->cache->get($key);
+        $entry = $refresh ? null : $this->cache->get($this->key());
         if ($entry === null) {
             $advisories = $this->fetch();
-            $this->cache->put($key, $advisories !== null, $advisories, $advisories !== null ? self::TTL : self::FAILURE_TTL);
-            $entry = $this->cache->get($key) ?? ['ok' => $advisories !== null, 'value' => $advisories, 'at' => time()];
+            $this->cache->put($this->key(), $advisories !== null, $advisories, $advisories !== null ? self::TTL : self::FAILURE_TTL);
+            $entry = $this->cache->get($this->key()) ?? ['ok' => $advisories !== null, 'value' => $advisories, 'at' => time()];
         }
 
+        return self::result($entry);
+    }
+
+    /**
+     * What is stored, without fetching: for a screen that draws first and
+     * asks afterwards.
+     *
+     * @return array{ok:bool, advisories:array<int,array<string,mixed>>, checked_at:int}|null
+     *   null when nothing fresh is stored
+     */
+    public function stored(): ?array
+    {
+        $entry = $this->cache->get($this->key());
+
+        return $entry === null ? null : self::result($entry);
+    }
+
+    private function key(): string
+    {
+        return 'advisory-feed|' . $this->url;
+    }
+
+    /**
+     * @param array{ok:bool, value:mixed, at:int} $entry
+     * @return array{ok:bool, advisories:array<int,array<string,mixed>>, checked_at:int}
+     */
+    private static function result(array $entry): array
+    {
         $ok = $entry['ok'] && is_array($entry['value']);
 
         return [

@@ -403,7 +403,8 @@ class GuardHelperPlugin extends Plugin
                     ),
                     'icon'           => 'ShieldAlert',
                     'reappear_after' => '+1 day',
-                    'action'         => ['label' => 'Review', 'url' => rtrim($this->cloudUrl(), '/')],
+                    // The results on the Guard page, not Guard Cloud's home page.
+                    'action'         => ['label' => 'Review', 'url' => $this->absoluteUrl($this->adminNextRoute()) . '#security'],
                 ];
             }
         } catch (\Throwable $e) {
@@ -897,11 +898,116 @@ class GuardHelperPlugin extends Plugin
                 $latest = $boot->checkLatestAgentVersion($cloud, $this->lookupCache());
                 $html = $this->latestBadge($agent, $latest['version']);
             }
+        } elseif ($part === 'security') {
+            $html = $this->securityBody($this->securityChecker()->run($this->feedUrl($cloud), !empty($_GET['refresh'])));
         } else {
             $this->sendJson(404, ['error' => 'Unknown part']);
         }
 
         $this->sendJson(200, ['html' => $html]);
+    }
+
+    /**
+     * The free vulnerability check on the setup page, drawn from the stored
+     * copy of the advisory feed; when there is none, a placeholder the page
+     * fills in once it has asked Guard Cloud (see sendPart).
+     */
+    private function securitySection(string $cloud): string
+    {
+        try {
+            $result = $this->securityChecker()->run($this->feedUrl($cloud), false, false);
+        } catch (\Throwable $e) {
+            $result = ['status' => 'unknown', 'checked_at' => null, 'package_count' => 0, 'advisory_count' => null, 'findings' => []];
+        }
+        $body = $result['status'] === 'pending'
+            ? '<div id="guard-security" data-guard-part="security" data-guard-fail="Unknown: the check could not reach Guard Cloud.">'
+                . '<p class="muted">Checking this site&rsquo;s packages against the Guard advisory feed&hellip;</p></div>'
+            : $this->securityBody($result);
+
+        return '<div class="card sec" id="security"><h2>Vulnerability check</h2>' . $body . '</div>';
+    }
+
+    /**
+     * The check's result in plain markup: a finding per package with its
+     * installed version, the advisory, its severity and the fixed-in version.
+     *
+     * @param array<string,mixed> $result SecurityChecker::run()
+     */
+    private function securityBody(array $result): string
+    {
+        $e = static function ($v): string {
+            return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        };
+        $when = '';
+        if (!empty($result['checked_at']) && ($t = strtotime((string) $result['checked_at'])) !== false) {
+            $when = date('j M Y, H:i', $t);
+        }
+        $pkgs = (int) $result['package_count'] . ' installed package' . ((int) $result['package_count'] === 1 ? '' : 's');
+        $again = '<button type="button" class="secondary" data-guard-recheck>Check again</button>';
+
+        if (($result['status'] ?? '') !== 'ok') {
+            return '<div id="guard-security"><div class="state amber">'
+                . '<strong>Unknown: the check could not reach Guard Cloud.</strong>'
+                . '<p class="muted">None of this site&rsquo;s ' . $e($pkgs) . ' were checked, so this is not a clean result.'
+                . ($when !== '' ? ' Last tried ' . $e($when) . '.' : '') . ' It tries again within a couple of minutes.</p>'
+                . $again . '</div></div>';
+        }
+
+        $findings = (array) $result['findings'];
+        if ($findings === []) {
+            $count = (int) $result['advisory_count'];
+
+            return '<div id="guard-security"><div class="state green">'
+                . '<strong>No known vulnerabilities</strong>'
+                . '<p class="muted">' . $e($pkgs) . ' checked against ' . $count . ' published advisor' . ($count === 1 ? 'y' : 'ies') . '.'
+                . ($when !== '' ? ' Checked ' . $e($when) . '.' : '') . '</p>'
+                . $again . '</div></div>';
+        }
+
+        $severities = ['critical' => ['bad', 'Critical'], 'high' => ['bad', 'High'], 'medium' => ['warn', 'Medium'],
+            'moderate' => ['warn', 'Moderate'], 'low' => ['muted', 'Low']];
+        $types = ['core' => 'Grav core', 'plugin' => 'plugin', 'theme' => 'theme'];
+        $items = '';
+        foreach ($findings as $f) {
+            $sevKey = strtolower((string) ($f['severity'] ?? ''));
+            $sev = $severities[$sevKey] ?? ['muted', $sevKey !== '' ? ucfirst($sevKey) : 'Unrated'];
+            $ref = null;
+            foreach ((array) ($f['refs'] ?? []) as $r) {
+                if (is_string($r) && strncmp($r, 'https://', 8) === 0) {
+                    $ref = $r;
+                    break;
+                }
+            }
+            $title = $e($f['title'] ?? $f['advisory_id'] ?? '');
+            if ($ref !== null) {
+                $title = '<a href="' . $e($ref) . '" target="_blank" rel="noopener">' . $title . '</a>';
+            }
+            $type = (string) ($f['type'] ?? '');
+            $items .= '<li>'
+                . '<div class="f-top"><strong>' . $e($f['package_name'] ?? $f['slug'] ?? '') . '</strong>'
+                . ($type !== 'core' ? ' <span class="muted">' . $e($types[$type] ?? $type) . '</span>' : '')
+                . ' <span class="sev ' . $sev[0] . '">' . $e($sev[1]) . '</span></div>'
+                . '<div>' . $title . (!empty($f['advisory_id']) ? ' <span class="muted">' . $e($f['advisory_id']) . '</span>' : '') . '</div>'
+                . '<div class="muted">Installed <code>' . $e($f['installed_version'] ?? '') . '</code> &middot; '
+                . (!empty($f['fixed_in']) ? 'fixed in <code>' . $e($f['fixed_in']) . '</code>' : 'no fix yet') . '</div>'
+                . '</li>';
+        }
+        $n = count($findings);
+
+        return '<div id="guard-security"><div class="state red">'
+            . '<strong>' . $n . ' known vulnerabilit' . ($n === 1 ? 'y' : 'ies') . ' in this site&rsquo;s packages</strong>'
+            . '<p class="muted">Update each package to its fixed version.' . ($when !== '' ? ' Checked ' . $e($when) . '.' : '') . '</p></div>'
+            . '<ul class="findings">' . $items . '</ul>' . $again . '</div>';
+    }
+
+    private function securityChecker(): \Grav\Plugin\GuardHelper\Security\SecurityChecker
+    {
+        return new \Grav\Plugin\GuardHelper\Security\SecurityChecker($this->grav, $this->lookupCache());
+    }
+
+    private function feedUrl(string $cloud): string
+    {
+        return rtrim($cloud, '/') . '/feed/advisories.json';
     }
 
     private function lookupCache(): LookupCache
@@ -1051,21 +1157,45 @@ class GuardHelperPlugin extends Plugin
   .signup{margin-top:18px;padding:12px 14px;background:color-mix(in oklab,var(--primary) 8%,transparent);border:1px solid color-mix(in oklab,var(--primary) 25%,transparent);border-radius:8px;font-size:14px}
   .signup a,.signup-foot a{color:var(--primary);font-weight:600}
   .signup-foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
+  .sec{margin-top:16px}
+  .sec h2{font-size:16px;margin:0}
+  .sec .state{margin-top:12px}
+  .state.red{background:color-mix(in oklab,var(--err) 7%,transparent);border:1px solid color-mix(in oklab,var(--err) 26%,transparent);border-left:4px solid var(--err)}
+  .findings{list-style:none;margin:12px 0 0;padding:0;font-size:14px}
+  .findings li{padding:10px 0;border-top:1px solid var(--border)}
+  .findings li:first-child{border-top:0}
+  .findings li > div{margin-top:2px}
+  .findings a{color:var(--primary)}
+  .f-top{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+  .sev{font-size:11px;font-weight:600;padding:1px 8px;border-radius:6px}
+  .sev.bad{background:#fceeee;color:#b91c1c}
+  .sev.warn{background:#fdf3e2;color:#b45309}
+  .sev.muted{background:#f4f4f5;color:var(--muted)}
 </style></head><body>
   <div class="wrap">
     <div class="brand"><span class="mark">G</span><strong>Grav Guard</strong></div>
     <div class="card"><h1>Set up Guard Agent</h1>' . $body . $signup . '</div>
+    ' . $this->securitySection($cloud) . '
   </div>
 <script>
   // Fill in the parts that had to be asked of Guard Cloud, after the page
-  // has drawn. A part that fails stays as it is.
-  document.querySelectorAll("[data-guard-part]").forEach(function (el) {
+  // has drawn. A part that fails shows its data-guard-fail text.
+  function guardPart(el, part, extra) {
     var url = new URL(window.location.href);
-    url.search = "?guard-part=" + encodeURIComponent(el.getAttribute("data-guard-part"));
-    fetch(url.toString(), { credentials: "same-origin", headers: { "Accept": "application/json" } })
+    url.search = "?guard-part=" + encodeURIComponent(part) + (extra || "");
+    return fetch(url.toString(), { credentials: "same-origin", headers: { "Accept": "application/json" } })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
       .then(function (j) { var t = document.createElement("template"); t.innerHTML = j.html || ""; el.replaceWith(t.content); })
       .catch(function () { el.textContent = el.getAttribute("data-guard-fail") || ""; el.removeAttribute("data-guard-part"); });
+  }
+  document.querySelectorAll("[data-guard-part]").forEach(function (el) { guardPart(el, el.getAttribute("data-guard-part")); });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-guard-recheck]");
+    var box = document.getElementById("guard-security");
+    if (!b || !box) { return; }
+    b.disabled = true; b.textContent = "Checking\u2026";
+    box.setAttribute("data-guard-fail", "Unknown: the check could not reach Guard Cloud.");
+    guardPart(box, "security", "&refresh=1");
   });
 </script>
 </body></html>';

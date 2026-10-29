@@ -74,4 +74,26 @@ final class SecurityCheckerTest extends TestCase
         $this->assertSame(['A1', 'A3'], $ids);
         $this->assertSame('1.7.40', $findings[0]['installed_version']);
     }
+
+    public function testFindingsAreNamedAndWorstFirst(): void
+    {
+        $installed = [
+            ['type' => 'plugin', 'slug' => 'form', 'version' => '9.0.3', 'name' => 'Form'],
+            ['type' => 'plugin', 'slug' => 'admin', 'version' => '1.10.40', 'name' => 'Admin Panel'],
+            ['type' => 'theme', 'slug' => 'quark', 'version' => '2.0.0'],
+        ];
+        $advisories = [
+            ['advisory_id' => 'LOW', 'type' => 'plugin', 'slug' => 'admin', 'affected' => '<2', 'severity' => 'low'],
+            ['advisory_id' => 'UNRATED', 'type' => 'theme', 'slug' => 'quark', 'affected' => '<3'],
+            ['advisory_id' => 'CRIT', 'type' => 'plugin', 'slug' => 'form', 'affected' => '<10', 'severity' => 'Critical'],
+            ['advisory_id' => 'HIGH', 'type' => 'plugin', 'slug' => 'admin', 'affected' => '<2', 'severity' => 'high'],
+        ];
+
+        $findings = SecurityChecker::match($installed, $advisories);
+
+        $this->assertSame(['CRIT', 'HIGH', 'LOW', 'UNRATED'], array_column($findings, 'advisory_id'));
+        $this->assertSame('Form', $findings[0]['package_name']);
+        $this->assertSame('9.0.3', $findings[0]['installed_version']);
+        $this->assertSame('quark', $findings[3]['package_name'], 'a package with no name shows its slug');
+    }
 }

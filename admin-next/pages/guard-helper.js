@@ -4,8 +4,12 @@
 // item (/plugin/guard-helper). Shows install status + requirements and lets a
 // super-admin download + verify + unpack + pair the standalone agent in one
 // click, then displays the single-use pairing code to enter in Guard Cloud.
-// Backed by GuardController (GET /guard-helper/status, POST /guard-helper/setup,
-// /repair and /webhook).
+// Backed by GuardController (GET /guard-helper/status, /latest and /security,
+// POST /guard-helper/setup, /repair and /webhook).
+//
+// Below the agent card sits the free vulnerability check: this site's
+// installed packages against Guard Cloud's public advisory feed. The
+// dashboard banner's "Review" opens this page at #security.
 //
 // The element tag is injected by admin-next as window.__GRAV_PAGE_TAG.
 const TAG = window.__GRAV_PAGE_TAG;
@@ -14,12 +18,18 @@ class GuardHelperPage extends HTMLElement {
 	constructor() {
 		super();
 		this.attachShadow({ mode: 'open' });
-		this._state = { phase: 'loading', data: null, error: null, result: null, busy: false };
+		this._state = {
+			phase: 'loading', data: null, error: null, result: null, busy: false,
+			security: { phase: 'loading', data: null, error: null, busy: false },
+		};
+		// The banner's "Review" links here as #security: scroll there once it has drawn.
+		this._scrollToSecurity = window.location.hash === '#security';
 	}
 
 	connectedCallback() {
 		this._render();
 		this._loadStatus();
+		this._loadSecurity(false);
 	}
 
 	// ── API helpers ────────────────────────────────────────────────────────
@@ -73,6 +83,19 @@ class GuardHelperPage extends HTMLElement {
 		} catch (_) {
 			// Leave it as "latest unknown": a version badge is not worth an error.
 			this._patch({ data: { ...(this._state.data || {}), agent_latest_checked: true } });
+		}
+	}
+
+	// The free check. The endpoint answers from a stored copy of the feed when
+	// it has one; "Check again" asks Guard Cloud now (bounded, a few seconds).
+	async _loadSecurity(refresh) {
+		const prev = this._state.security;
+		this._patch({ security: { ...prev, phase: prev.data ? 'ready' : 'loading', busy: true, error: null } });
+		try {
+			const data = await this._api('GET', '/guard-helper/security' + (refresh ? '?refresh=1' : ''));
+			this._patch({ security: { phase: 'ready', data, error: null, busy: false } });
+		} catch (e) {
+			this._patch({ security: { phase: 'error', data: null, error: e.message, busy: false } });
 		}
 	}
 
@@ -136,8 +159,16 @@ class GuardHelperPage extends HTMLElement {
 		this.shadowRoot.getElementById('repair-btn')?.addEventListener('click', () => this._repair());
 		this.shadowRoot.getElementById('retry-btn')?.addEventListener('click', () => this._loadStatus());
 		this.shadowRoot.getElementById('webhook-btn')?.addEventListener('click', () => this._enableWebhook());
+		this.shadowRoot.getElementById('sec-refresh')?.addEventListener('click', () => this._loadSecurity(true));
 		this.shadowRoot.querySelectorAll('[data-copy]').forEach((el) =>
 			el.addEventListener('click', () => this._copy(el.getAttribute('data-copy'))));
+
+		if (this._scrollToSecurity && this._state.phase !== 'loading' && this._state.security.phase !== 'loading') {
+			this._scrollToSecurity = false;
+			// Not smooth: the page draws inside the host's own scroller, where a
+			// smooth scroll from in here does nothing at all.
+			this.shadowRoot.getElementById('security')?.scrollIntoView({ block: 'start' });
+		}
 	}
 
 	_codeRow(label, value) {
@@ -331,6 +362,69 @@ class GuardHelperPage extends HTMLElement {
 	}
 
 	_body(s) {
+		return this._main(s) + this._security(s);
+	}
+
+	/**
+	 * The vulnerability check: package, installed version, advisory, severity
+	 * and fixed-in version for each finding, worst first. "Unknown" is its own
+	 * state: when the feed can't be fetched nothing was checked, which is not
+	 * the same as a clean site.
+	 */
+	_security(s) {
+		const sec = s.security;
+		const d = sec.data || {};
+		const btn = `<button id="sec-refresh" class="btn ghost sm" ${sec.busy ? 'disabled' : ''}>${sec.busy ? 'Checking…' : 'Check again'}</button>`;
+		const head = `<div class="sec-head"><h2>Vulnerability check</h2>${sec.phase === 'loading' ? '' : btn}</div>`;
+		const checked = d.checked_at ? ` Checked ${esc(formatDate(d.checked_at))}.` : '';
+		const pkgs = `${d.package_count} installed package${d.package_count === 1 ? '' : 's'}`;
+
+		let body;
+		if (sec.phase === 'loading') {
+			body = `<p class="muted">Checking this site's packages against the Guard advisory feed…</p>`;
+		} else if (sec.phase === 'error' || d.status !== 'ok') {
+			const why = sec.phase === 'error' ? `<p class="hint">${esc(sec.error)}</p>` : '';
+			body = `<div class="status-row warn-row"><span class="dot"></span><div>
+				<strong>Unknown: the check could not reach Guard Cloud.</strong>
+				<p class="hint">${sec.phase === 'error' ? 'This site\'s packages were not' : `None of this site's ${esc(pkgs)} were`} checked, so this is not a clean result.${d.checked_at ? ` Last tried ${esc(formatDate(d.checked_at))}.` : ''} It tries again within a couple of minutes, or use Check again.</p>
+				${why}</div></div>`;
+		} else if (!d.findings || d.findings.length === 0) {
+			body = `<div class="status-row ok-row"><span class="dot"></span><div>
+				<strong>No known vulnerabilities</strong>
+				<p class="hint">${esc(pkgs)} checked against ${esc(d.advisory_count)} published advisor${d.advisory_count === 1 ? 'y' : 'ies'}.${checked}</p>
+				</div></div>`;
+		} else {
+			const n = d.findings.length;
+			body = `<div class="status-row bad-row"><span class="dot"></span><div>
+				<strong>${n} known vulnerabilit${n === 1 ? 'y' : 'ies'} in this site's packages</strong>
+				<p class="hint">Update each package to its fixed version.${checked}</p>
+				</div></div>
+				<div class="table-scroll"><table>
+					<thead><tr><th>Package</th><th>Installed</th><th>Advisory</th><th>Severity</th><th>Fixed in</th></tr></thead>
+					<tbody>${d.findings.map((f) => this._findingRow(f)).join('')}</tbody>
+				</table></div>`;
+		}
+
+		return `<section class="card sec" id="security" aria-labelledby="sec-title">${head.replace('<h2>', '<h2 id="sec-title">')}${body}</section>`;
+	}
+
+	_findingRow(f) {
+		const ref = (f.refs || []).find((r) => typeof r === 'string' && /^https:\/\//.test(r));
+		const title = ref
+			? `<a href="${esc(ref)}" target="_blank" rel="noopener">${esc(f.title || f.advisory_id)}</a>`
+			: esc(f.title || f.advisory_id);
+		const type = { core: 'Grav core', plugin: 'Plugin', theme: 'Theme' }[f.type] || f.type || '';
+		const fixed = f.fixed_in ? `<span class="ver-cell">${esc(f.fixed_in)}</span>` : '<span class="muted">No fix yet</span>';
+		return `<tr>
+			<td><div class="pkg">${esc(f.package_name || f.slug)}</div>${f.type === 'core' ? '' : `<div class="sub">${esc(type)}</div>`}</td>
+			<td class="ver-cell">${esc(f.installed_version)}</td>
+			<td><div>${title}</div>${f.advisory_id ? `<div class="sub">${esc(f.advisory_id)}${f.cve ? ` · ${esc(f.cve)}` : ''}</div>` : ''}</td>
+			<td>${severity(f.severity)}</td>
+			<td>${fixed}</td>
+		</tr>`;
+	}
+
+	_main(s) {
 		if (s.phase === 'loading') {
 			return `<div class="card"><div class="muted">Checking agent status…</div></div>`;
 		}
@@ -385,16 +479,26 @@ class GuardHelperPage extends HTMLElement {
 
 	_css() {
 		return `
-		:host { display:block; }
-		.wrap { max-width:640px; }
+		:host { display:block;
+			/* The host's semantic colours, with a fallback for an older host.
+			   Text shades mix toward --foreground so they read in both themes. */
+			--gh-ok: var(--success, #16a34a);
+			--gh-warn: var(--warning, #d97706);
+			--gh-bad: var(--destructive, #dc2626);
+			--gh-ok-fg: color-mix(in oklab, var(--gh-ok) 74%, var(--foreground, #09090b));
+			--gh-warn-fg: color-mix(in oklab, var(--gh-warn) 62%, var(--foreground, #09090b));
+			/* 55%, not 62%: older hosts define a dark-theme --destructive that
+			   is nearly as dark as the card behind it. */
+			--gh-bad-fg: color-mix(in oklab, var(--gh-bad) 55%, var(--foreground, #09090b)); }
+		.wrap { max-width:640px; display:flex; flex-direction:column; gap:16px; }
 		.card { display:flex; flex-direction:column; gap:14px;
 			padding:24px; border:1px solid var(--border,#e4e4e7); border-radius:12px;
 			background:var(--card,var(--background,#fff)); color:var(--foreground,#09090b);
 			font:14px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 		.status { display:flex; align-items:center; gap:8px; font-weight:600; font-size:15px; }
 		.dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
-		.ok .dot { background:#16a34a; } .ok { color:#16a34a; }
-		.off .dot { background:#d97706; } .off { color:#d97706; }
+		.ok .dot { background:var(--gh-ok); } .ok { color:var(--gh-ok-fg); }
+		.off .dot { background:var(--gh-warn); } .off { color:var(--gh-warn-fg); }
 		.muted { color:var(--muted-foreground,#71717a); margin:0; }
 		.field { display:flex; flex-direction:column; gap:5px; }
 		.lbl { font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em;
@@ -405,14 +509,14 @@ class GuardHelperPage extends HTMLElement {
 			border-radius:8px; padding:10px 12px; font-size:13px; }
 		code { font-family:ui-monospace,Menlo,monospace; background:var(--muted,#f4f4f5);
 			padding:1px 5px; border-radius:4px; font-size:.92em; }
-		.err { color:#dc2626; background:color-mix(in oklab,#dc2626 10%,transparent);
-			border:1px solid color-mix(in oklab,#dc2626 30%,transparent); border-radius:8px; padding:10px 12px; }
-		.warn { color:#d97706; font-size:13px; }
+		.err { color:var(--gh-bad-fg); background:color-mix(in oklab,var(--gh-bad) 10%,transparent);
+			border:1px solid color-mix(in oklab,var(--gh-bad) 30%,transparent); border-radius:8px; padding:10px 12px; }
+		.warn { color:var(--gh-warn-fg); font-size:13px; }
 		/* The cron notice carries a copyable line, so it needs to read as a
 		   panel rather than a stray sentence. */
 		.warn.panel { display:flex; flex-direction:column; gap:10px;
-			background:color-mix(in oklab,#d97706 8%,transparent);
-			border:1px solid color-mix(in oklab,#d97706 28%,transparent);
+			background:color-mix(in oklab,var(--gh-warn) 8%,transparent);
+			border:1px solid color-mix(in oklab,var(--gh-warn) 28%,transparent);
 			border-radius:8px; padding:12px 14px; }
 		.warn.panel strong { color:var(--foreground,#09090b); }
 		/* Explanatory text: guidance rather than warning, so it reads in the
@@ -429,12 +533,15 @@ class GuardHelperPage extends HTMLElement {
 		.status-row .row-body strong { margin-bottom:-6px; }
 		/* Two status rows in a row: the gap between them comes from the card. */
 		.status-row + .status-row { margin-top:0; }
-		.ok-row { background:color-mix(in oklab,#16a34a 8%,transparent);
-			border:1px solid color-mix(in oklab,#16a34a 26%,transparent); }
-		.ok-row .dot { background:#16a34a; }
-		.warn-row { background:color-mix(in oklab,#d97706 8%,transparent);
-			border:1px solid color-mix(in oklab,#d97706 28%,transparent); }
-		.warn-row .dot { background:#d97706; }
+		.ok-row { background:color-mix(in oklab,var(--gh-ok) 8%,transparent);
+			border:1px solid color-mix(in oklab,var(--gh-ok) 26%,transparent); }
+		.ok-row .dot { background:var(--gh-ok); }
+		.warn-row { background:color-mix(in oklab,var(--gh-warn) 8%,transparent);
+			border:1px solid color-mix(in oklab,var(--gh-warn) 28%,transparent); }
+		.warn-row .dot { background:var(--gh-warn); }
+		.bad-row { background:color-mix(in oklab,var(--gh-bad) 8%,transparent);
+			border:1px solid color-mix(in oklab,var(--gh-bad) 28%,transparent); }
+		.bad-row .dot { background:color-mix(in oklab,var(--gh-bad) 75%,var(--foreground,#09090b)); }
 		/* Collapsed by default: this is the optional, shell-only route, and
 		   leaving it open turned the page into a wall of instructions. */
 		.adv { margin-top:14px; border:1px solid var(--border,#e4e4e7); border-radius:8px; }
@@ -453,11 +560,11 @@ class GuardHelperPage extends HTMLElement {
 		.btn.ghost { background:transparent; color:var(--foreground,#09090b); border:1px solid var(--border,#e4e4e7); }
 		.btn.sm { padding:6px 12px; font-size:12px; }
 		.vers { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:-4px 0 12px; }
-		.ver { font-size:12px; color:var(--muted-fg,#71717a); }
+		.ver { font-size:12px; color:var(--muted-foreground,#71717a); }
 		.ver-k { text-transform:uppercase; letter-spacing:.04em; font-weight:600; margin-right:4px; }
-		.ver-new { font-size:12px; font-weight:600; color:var(--warning,#b45309);
-			background:var(--warning-bg,rgba(180,83,9,.12)); padding:2px 8px; border-radius:99px; }
-		.ver-unknown { font-size:12px; color:var(--muted-fg,#71717a); font-style:italic; }
+		.ver-new { font-size:12px; font-weight:600; color:var(--gh-warn-fg);
+			background:color-mix(in srgb,var(--gh-warn) 14%,transparent); padding:2px 8px; border-radius:99px; }
+		.ver-unknown { font-size:12px; color:var(--muted-foreground,#71717a); font-style:italic; }
 		.pair-block { margin-top:14px; }
 		.pair-out { margin-top:12px; padding:12px 14px; border-radius:8px;
 			border:1px solid var(--border,#e4e4e7); background:var(--muted-bg,rgba(0,0,0,.02)); }
@@ -469,8 +576,48 @@ class GuardHelperPage extends HTMLElement {
 			background:color-mix(in oklab,var(--primary,#2463eb) 8%,transparent);
 			border:1px solid color-mix(in oklab,var(--primary,#2463eb) 25%,transparent); }
 		.signup a, .signup-foot a { color:var(--primary,#2463eb); font-weight:600; }
-		.signup-foot { padding-top:14px; border-top:1px solid var(--border,#e4e4e7); }`;
+		.signup-foot { padding-top:14px; border-top:1px solid var(--border,#e4e4e7); }
+		/* Vulnerability check */
+		.sec { gap:12px; }
+		.sec-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+		.sec-head h2 { margin:0; font-size:15px; font-weight:600; }
+		.sec .status-row { margin-top:0; }
+		.table-scroll { overflow-x:auto; }
+		table { inline-size:100%; border-collapse:collapse; font-size:13px; }
+		th { text-align:start; color:var(--muted-foreground,#71717a); font-weight:500; font-size:12px;
+			padding:8px 10px; border-block-end:1px solid var(--border,#e4e4e7); white-space:nowrap;
+			background:color-mix(in srgb,var(--muted,#f4f4f5) 30%,transparent); }
+		td { padding:8px 10px; vertical-align:top;
+			border-block-end:1px solid color-mix(in srgb,var(--border,#e4e4e7) 60%,transparent); }
+		tbody tr:last-child td { border-block-end:0; }
+		td a { color:var(--primary,#2463eb); text-decoration:none; }
+		td a:hover { text-decoration:underline; }
+		.pkg { font-weight:600; white-space:nowrap; }
+		.sub { color:var(--muted-foreground,#71717a); font-size:12px; }
+		.ver-cell { font-family:ui-monospace,Menlo,monospace; font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+		.pill { display:inline-block; border-radius:6px; padding:1px 8px; font-size:0.6875rem; font-weight:500; white-space:nowrap; }
+		.pill.bad { background:color-mix(in srgb,var(--gh-bad) 16%,transparent); color:var(--gh-bad-fg); }
+		.pill.warn { background:color-mix(in srgb,var(--gh-warn) 18%,transparent); color:var(--gh-warn-fg); }
+		.pill.muted { background:var(--muted,#f4f4f5); color:var(--muted-foreground,#71717a); }`;
 	}
+}
+
+// One table from a feed severity to a pill: the words people read, in the
+// host's tones. A severity nobody has named yet still shows, as itself.
+const SEVERITY = {
+	critical: ['bad', 'Critical'], high: ['bad', 'High'],
+	medium: ['warn', 'Medium'], moderate: ['warn', 'Moderate'], low: ['muted', 'Low'],
+};
+function severity(value) {
+	const key = String(value || '').toLowerCase();
+	const [tone, label] = SEVERITY[key] || ['muted', key ? key[0].toUpperCase() + key.slice(1) : 'Unrated'];
+	return `<span class="pill ${tone}">${esc(label)}</span>`;
+}
+
+const DATE_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+function formatDate(iso) {
+	const d = new Date(iso);
+	return Number.isNaN(d.getTime()) ? '' : DATE_TIME.format(d);
 }
 
 function esc(v) {
