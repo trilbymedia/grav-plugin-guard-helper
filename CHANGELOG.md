@@ -1,3 +1,24 @@
+# v0.2.0-beta.8
+## 10/29/2026
+
+1. [](#new)
+    * The Guard page has a **Vulnerability check**, in Admin Next and on the classic setup page: each of this site's packages with a published advisory, with its installed version, the advisory, its severity and the version that fixes it, worst first. A clean site says how many packages were checked, and **Check again** fetches the advisory feed now. The dashboard banner's **Review** opens this list instead of Guard Cloud's home page
+2. [](#improved)
+    * The Guard page, the status call and the dashboard widget no longer wait on Guard Cloud. They draw from what the site already knows, and the newest agent version is asked for afterwards, with a timeout of a few seconds, and kept for six hours (five minutes after a failed lookup) in `user/data/guard-helper/cache`. Until it is known the page says "checking for updates", and "latest unknown" when Guard Cloud doesn't answer
+    * The advisory feed used by the Admin Next dashboard banner gives up after a few seconds instead of eight, so a Guard Cloud that is down no longer slows the dashboard
+    * The Guard page, both dashboard widgets and the help text now agree on where the site stands, in three states: installed but not paired yet, paired but Guard Cloud hasn't reached the site, and connected. Right after an install the page says "installed, pairing started" instead of "active". Once a site is paired, **Show pairing code** becomes **Show a new pairing code** and says it is only needed to add the site again
+    * The signup links name the host of the configured signup URL instead of always saying gravguard.com
+    * The Admin Next page and widget take their green, amber and red from Admin Next's own colours, so they follow the dark theme
+3. [](#bugfix)
+    * A Guard Cloud that never answered held the Guard page, the dashboard widget and the status call for 60 seconds and then failed with "Maximum execution time exceeded" (Admin Next and classic). The newest agent version is no longer asked for on the way to drawing the page, and only the release download during install keeps the long timeout
+    * A failed advisory feed fetch was kept for an hour as "no advisories", so the site read as clean while Guard Cloud was down. A failure is now kept for two minutes as unknown, the check says it could not reach Guard Cloud, and no banner is raised. The cached feed is also kept per cloud URL, so changing the Guard Cloud URL no longer reuses the old cloud's feed
+    * A Grav 2 super-admin with `api.super` but not `admin.super` (what `bin/plugin login new-user` creates) got no dashboard widget or banner and was sent away from the setup page. Either permission now counts, directly or through a group
+    * The "Set up" links in the Admin Next banner and the classic dashboard widget went to the frontend setup route, which sent admin sessions straight back to the admin. They now open the Guard page in the admin
+    * Someone who isn't a super-admin is now sent to the configured admin route instead of a hard-coded `/admin`, without a redirect loop for a logged-in admin on the classic Guard page
+    * A setup route of `/` or nothing turned the home page into the setup page and redirected every visitor to the admin. Such a route, or one inside the admin or the API, now falls back to `/_guard-setup`, and both admins refuse to save it
+    * Saving the plugin settings wrote the parked Shield settings into `user/config/plugins/guard-helper.yaml`. They are no longer in the defaults, and saving drops a leftover `shield:` block
+    * The scheduler webhook's answers no longer send a session cookie or leave a session behind
+
 # v0.2.0-beta.7
 ## 10/27/2026
 

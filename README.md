@@ -36,30 +36,27 @@ Turn off **Let Guard run scheduled jobs through Grav's webhook** in the plugin s
 
 The setup is discoverable on both admins:
 
-- **Admin2** (the supported target for Grav 2) — a **Guard** entry in the
-  sidebar opens the setup page (a web component), a **dashboard widget** shows
-  agent status with a one-click install, and a **dismissible banner** (with a
-  shield icon) prompts setup until the agent is installed. These are backed by a
-  small API (`GET /guard-helper/status`, `POST /guard-helper/setup`,
-  `/repair` and `/webhook`),
-  super-admin only.
-- **Admin classic** — a **Guard** admin-menu entry, plus a prominent **top
-  dashboard widget** (classic admin has no top-banner primitive, so the widget
-  is the notice), plus a self-contained frontend fallback route (default
-  `/_guard-setup`) that works even when no admin SPA is installed.
+- **Admin2** (the supported target for Grav 2) — a **Guard** entry in the sidebar opens the setup page (a web component), a **dashboard widget** shows agent status with a one-click install, and a **dismissible banner** (with a shield icon) prompts setup until the agent is installed; its **Set up** opens the Guard page. These are backed by a small API (`GET /guard-helper/status`, `/latest` and `/security`, `POST /guard-helper/setup`, `/repair` and `/webhook`), super-admin only (`api.super` or `admin.super`).
+- **Admin classic** — a **Guard** admin-menu entry, plus a prominent **top dashboard widget** (classic admin has no top-banner primitive, so the widget is the notice), plus a self-contained frontend fallback route (default `/_guard-setup`) that works even when no admin SPA is installed. The route can't be the home page or a route inside the admin; such a setting falls back to `/_guard-setup`.
 
-Every setup panel points users without a Guard Cloud account to create a free
-one (`signup_url`, default `gravguard.com`) — emphasized right after install,
-when the pairing code is ready to enter.
+Every screen shows the same three states once the agent is installed: not paired yet, paired but Guard Cloud hasn't reached the site, and connected.
+
+Screens draw from what the site already knows and never wait on Guard Cloud. The newest agent version and the advisory feed are kept in `user/data/guard-helper/cache` (the version for six hours, the feed for an hour, a failed lookup for a few minutes) and are asked for after the screen has drawn, with a timeout of a few seconds.
+
+Every setup panel points users without a Guard Cloud account to create a free one (`signup_url`, default `gravguard.com`, and the link names its host) — emphasized right after install, when the pairing code is ready to enter.
 
 The banner relies on the API plugin's `onApiDashboardNotifications` event, which
 lets a plugin raise a persistent, dismissible admin notice; the banner renders
 the notice's `icon` as a Lucide icon when it's an icon name (added to
 admin-next's `TopBanner`).
 
+## Free vulnerability check
+
+The Guard page (both admins) has a **Vulnerability check** that matches this site's installed core, plugin and theme versions against Guard Cloud's public advisory feed (`<cloud_url>/feed/advisories.json`). Matching happens on the site, so the package list never leaves it. Each finding lists the package, the installed version, the advisory, its severity and the version that fixes it. When the feed can't be fetched the check says it is unknown rather than reporting the site clean. In Admin Next, a site with findings also gets a dashboard banner whose **Review** opens this list.
+
 ## Also in this plugin (Phase 3)
 
-- Free in-admin health and vulnerability checker (Admin2 panel)
+- Free in-admin vulnerability checker (see above)
 - One-click SSO login token consumption (off by default, scoped-key gated)
 - Guard Shield request filtering (virtual patching) — parked: the code is kept, but it is off, has no settings, and fetches nothing
 - Save-event pings for real-time backup
