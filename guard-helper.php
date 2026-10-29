@@ -10,6 +10,7 @@ use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
 use Grav\Plugin\GuardHelper\LookupCache;
 use Grav\Plugin\GuardHelper\SchedulerWebhook;
+use Grav\Plugin\GuardHelper\SuperAdmin;
 use RocketTheme\Toolbox\Event\Event;
 
 /**
@@ -200,8 +201,7 @@ class GuardHelperPlugin extends Plugin
      */
     public function onAdminDashboard(): void
     {
-        $user = $this->grav['user'] ?? null;
-        if ($user === null || !$user->authorize('admin.super')) {
+        if (!SuperAdmin::check($this->grav['user'] ?? null)) {
             return;
         }
 
@@ -262,7 +262,9 @@ class GuardHelperPlugin extends Plugin
             'icon'      => 'fa-shield-halved',
             'route'     => '/plugin/' . self::SLUG,
             'priority'  => 5,
-            'authorize' => 'admin.super',
+            // Either super permission (any-of); the page's API calls then
+            // apply the API plugin's own super-admin rule.
+            'authorize' => SuperAdmin::PERMISSIONS,
         ];
         $event['items'] = $items;
     }
@@ -452,7 +454,7 @@ class GuardHelperPlugin extends Plugin
     public function handleSetup(): void
     {
         $user = $this->grav['user'] ?? null;
-        if ($user === null || !$user->authenticated || !$user->authorize('admin.super')) {
+        if (!SuperAdmin::check($user)) {
             $this->grav->redirect('/admin', 302);
 
             return;
@@ -534,11 +536,14 @@ class GuardHelperPlugin extends Plugin
         return rtrim((string) $this->grav['uri']->rootUrl(true), '/') . $path;
     }
 
+    /**
+     * The admin API's events carry the user it has already authenticated.
+     * `admin.super` or `api.super`: a native Grav 2 super-admin has only the
+     * second.
+     */
     private function eventUserIsSuperAdmin(Event $event): bool
     {
-        $user = $event['user'] ?? null;
-
-        return $user !== null && (bool) $user->get('access.admin.super', false);
+        return SuperAdmin::check($event['user'] ?? null, true);
     }
 
     /**
