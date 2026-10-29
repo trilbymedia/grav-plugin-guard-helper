@@ -126,7 +126,10 @@ final class ShieldTest extends TestCase
     /**
      * Shield is parked: kept in code, off, not offered. Nothing in the settings
      * UI may switch it on, and the plugin's parking switch must be set — it
-     * keeps a leftover `shield.enabled: true` from fetching any rules.
+     * keeps a leftover `shield.enabled: true` from fetching any rules. The
+     * defaults carry no `shield` block either: the classic admin posts every
+     * default the form doesn't show back as a hidden field, which wrote one
+     * into user/config on every save.
      */
     public function testShieldIsParkedAndNotOffered(): void
     {
@@ -136,6 +139,7 @@ final class ShieldTest extends TestCase
             $this->assertDoesNotMatchRegularExpression('/shield[._\\-](enabled|public_key)|shield:\s*$/mi', $text, "$file must not offer Shield settings");
         }
         $this->assertMatchesRegularExpression('/SHIELD_PARKED = true;/', (string) file_get_contents("$root/guard-helper.php"));
-        $this->assertMatchesRegularExpression("/^shield:\\n  enabled: false/m", (string) file_get_contents("$root/guard-helper.yaml"));
+        $this->assertDoesNotMatchRegularExpression('/^shield:/m', (string) file_get_contents("$root/guard-helper.yaml"));
+        $this->assertStringContainsString("\$obj->undef('shield')", (string) file_get_contents("$root/guard-helper.php"), 'saving the settings drops a leftover shield block');
     }
 }

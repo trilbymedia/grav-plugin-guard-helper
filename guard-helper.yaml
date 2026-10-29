@@ -20,12 +20,3 @@ signup_url: 'https://gravguard.com'
 # itself when the scheduler-webhook plugin is not enabled. false stops both,
 # and leaves the scheduler settings as they are.
 scheduler_webhook: true
-
-# Guard Shield — endpoint-WAF virtual patching. PARKED: kept in code but off and
-# not offered; the plugin ignores these settings and fetches no rules while it is
-# parked (GuardHelperPlugin::SHIELD_PARKED). When it returns, rules are fetched
-# from the cloud as a signed bundle and applied ONLY if the Ed25519 signature
-# verifies against public_key, so a compromised CDN can't inject a rule.
-shield:
-  enabled: false
-  public_key: ''

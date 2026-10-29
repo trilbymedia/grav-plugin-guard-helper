@@ -44,10 +44,13 @@ class GuardHelperPlugin extends Plugin
 
     /**
      * Guard Shield is parked: the code stays, but it is off and not offered.
-     * It has no settings in the blueprint or the admin pages, and while this
-     * is true it never runs and never fetches a rule bundle, whatever
-     * `shield.enabled` says — so a value left over from testing cannot turn it
-     * back on. Flip this (and restore the settings) to bring it back.
+     * It has no settings in the blueprint, the defaults or the admin pages,
+     * and while this is true it never runs and never fetches a rule bundle,
+     * whatever `shield.enabled` says — so a value left over from testing
+     * cannot turn it back on. Saving the settings drops any `shield` block a
+     * site still has (onAdminSave). Flip this (and restore the settings:
+     * `shield.enabled`, and `shield.public_key`, the Ed25519 key the rule
+     * bundle must be signed with) to bring it back.
      */
     private const SHIELD_PARKED = true;
 
@@ -246,7 +249,8 @@ class GuardHelperPlugin extends Plugin
     }
 
     /**
-     * Check Guard Helper's own settings before they are written.
+     * Check Guard Helper's own settings before they are written: no parked
+     * Shield block, and a setup route that can't take over the home page.
      *
      * The admin API does not validate a plugin's settings against its
      * blueprint, so a setup route of "/" saved from Admin Next would be
@@ -259,6 +263,13 @@ class GuardHelperPlugin extends Plugin
         $obj = $event['object'] ?? null;
         if (!$this->isOwnConfig($obj)) {
             return;
+        }
+
+        // Shield is parked and has no settings. Both admins post back keys
+        // the form doesn't show (classic as hidden _json fields), which wrote
+        // a `shield:` block into user/config; drop it instead.
+        if (self::SHIELD_PARKED && method_exists($obj, 'undef') && $obj->get('shield') !== null) {
+            $obj->undef('shield');
         }
 
         $route = $obj->get('setup_route');
