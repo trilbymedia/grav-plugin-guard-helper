@@ -57,8 +57,22 @@ class GuardHelperPage extends HTMLElement {
 		try {
 			const data = await this._api('GET', '/guard-helper/status');
 			this._patch({ phase: 'ready', data });
+			// The status call never asks Guard Cloud, so the page draws from
+			// what the site already knows. When nothing fresh is stored about
+			// the newest agent, ask now, after drawing, and fill it in.
+			if (data?.agent_version && data.agent_latest_checked === false) this._loadLatest();
 		} catch (e) {
 			this._patch({ phase: 'error', error: e.message });
+		}
+	}
+
+	async _loadLatest() {
+		try {
+			const latest = await this._api('GET', '/guard-helper/latest');
+			this._patch({ data: { ...(this._state.data || {}), ...latest } });
+		} catch (_) {
+			// Leave it as "latest unknown": a version badge is not worth an error.
+			this._patch({ data: { ...(this._state.data || {}), agent_latest_checked: true } });
 		}
 	}
 
@@ -272,7 +286,9 @@ class GuardHelperPage extends HTMLElement {
 			// Say what to move TO, not just that it is behind — "out of date" with
 			// no target is a worry rather than an instruction.
 			agent += `<span class="ver-new">update available: ${esc(d.agent_latest)}</span>`;
-		} else if (d.agent_outdated === null) {
+		} else if (d.agent_latest_checked === false) {
+			agent += `<span class="ver-unknown">checking for updates…</span>`;
+		} else if (d.agent_outdated === null || d.agent_outdated === undefined) {
 			// Could not ask the cloud. Not the same as being current.
 			agent += `<span class="ver-unknown">latest unknown</span>`;
 		}

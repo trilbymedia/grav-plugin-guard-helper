@@ -492,6 +492,94 @@ final class AgentBootstrapTest extends TestCase
         );
     }
 
+    /**
+     * The Guard page draws from what is stored and asks Guard Cloud only
+     * afterwards; the answer is kept for hours, a failure for minutes, and
+     * the lookup itself is short (a black-holed cloud used to hold the page
+     * for a minute).
+     */
+    public function testTheLatestVersionIsAskedOnceAndKept(): void
+    {
+        [$descriptor] = $this->release(['agent.php' => '<?php']);
+        $calls = [];
+        $boot = $this->boot(static function (string $url, int $timeout = 0, int $connect = 0) use (&$calls, $descriptor): ?string {
+            $calls[] = [$url, $timeout, $connect];
+
+            return $descriptor;
+        });
+        $now = 1_800_000_000;
+        $cache = new \Grav\Plugin\GuardHelper\LookupCache($this->gravRoot . '/cache', static function () use (&$now): int {
+            return $now;
+        });
+
+        $this->assertSame(['checked' => false, 'version' => null, 'checked_at' => null], $boot->knownLatestAgentVersion('https://cloud.test', $cache));
+        $this->assertSame([], $calls, 'reading what is known never asks');
+
+        $this->assertSame('9.9.9', $boot->checkLatestAgentVersion('https://cloud.test', $cache)['version']);
+        $this->assertCount(1, $calls);
+        $this->assertLessThanOrEqual(5, $calls[0][1], 'the lookup has a short total timeout');
+        $this->assertLessThanOrEqual(3, $calls[0][2], 'and a short connect timeout');
+
+        $now += AgentBootstrap::LATEST_TTL - 1;
+        $this->assertSame('9.9.9', $boot->knownLatestAgentVersion('https://cloud.test', $cache)['version']);
+        $this->assertSame('9.9.9', $boot->checkLatestAgentVersion('https://cloud.test', $cache)['version']);
+        $this->assertCount(1, $calls, 'a fresh answer is not asked again');
+
+        $now += 1;
+        $this->assertFalse($boot->knownLatestAgentVersion('https://cloud.test', $cache)['checked']);
+        $boot->checkLatestAgentVersion('https://cloud.test', $cache);
+        $this->assertCount(2, $calls);
+
+        // a different cloud is a different answer
+        $this->assertFalse($boot->knownLatestAgentVersion('https://other.test', $cache)['checked']);
+    }
+
+    public function testAFailedLatestLookupIsKeptBrieflyAsUnknown(): void
+    {
+        $calls = 0;
+        $boot = $this->boot(static function (string $url) use (&$calls): ?string {
+            $calls++;
+
+            return null;
+        });
+        $now = 1_800_000_000;
+        $cache = new \Grav\Plugin\GuardHelper\LookupCache($this->gravRoot . '/cache', static function () use (&$now): int {
+            return $now;
+        });
+
+        $this->assertSame(['checked' => true, 'version' => null, 'checked_at' => $now], $boot->checkLatestAgentVersion('https://cloud.test', $cache));
+        $now += AgentBootstrap::LATEST_FAILURE_TTL - 1;
+        $boot->checkLatestAgentVersion('https://cloud.test', $cache);
+        $this->assertSame(1, $calls, 'a dead cloud is not asked on every page load');
+        $this->assertLessThan(AgentBootstrap::LATEST_TTL, AgentBootstrap::LATEST_FAILURE_TTL);
+
+        $now += 1;
+        $boot->checkLatestAgentVersion('https://cloud.test', $cache);
+        $this->assertSame(2, $calls, 'and is asked again soon after');
+    }
+
+    /** Only the release zip gets the long timeout. */
+    public function testOnlyTheReleaseDownloadGetsTheLongTimeout(): void
+    {
+        [$descriptor, $zip] = $this->release(['agent.php' => '<?php']);
+        $timeouts = [];
+        $boot = $this->boot(static function (string $url, int $timeout = 0, int $connect = 0) use (&$timeouts, $descriptor, $zip): ?string {
+            $timeouts[str_ends_with($url, '/manifest') ? 'manifest' : 'zip'] = [$timeout, $connect];
+
+            return str_ends_with($url, '/manifest') ? $descriptor : $zip;
+        });
+        try {
+            $boot->install('https://cloud.test');
+        } catch (BootstrapException $e) {
+            // the toy release has no agent classes to pair with; the fetches are what is under test
+        }
+
+        $this->assertSame(60, $timeouts['zip'][0]);
+        $this->assertLessThan(60, $timeouts['manifest'][0]);
+        $this->assertLessThanOrEqual(5, $timeouts['zip'][1]);
+        $this->assertLessThanOrEqual(5, $timeouts['manifest'][1]);
+    }
+
     private function removeTree(string $dir): void
     {
         if (!is_dir($dir)) {

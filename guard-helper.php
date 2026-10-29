@@ -8,6 +8,7 @@ use Grav\Common\Plugin;
 use Grav\Common\Utils;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\LookupCache;
 use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use RocketTheme\Toolbox\Event\Event;
 
@@ -243,6 +244,7 @@ class GuardHelperPlugin extends Plugin
         $controller = \Grav\Plugin\GuardHelper\Api\GuardController::class;
 
         $routes->get('/' . self::SLUG . '/status', [$controller, 'status']);
+        $routes->get('/' . self::SLUG . '/latest', [$controller, 'latest']);
         $routes->post('/' . self::SLUG . '/setup', [$controller, 'setup']);
         $routes->post('/' . self::SLUG . '/repair', [$controller, 'repair']);
         $routes->post('/' . self::SLUG . '/webhook', [$controller, 'webhookEnable']);
@@ -456,6 +458,13 @@ class GuardHelperPlugin extends Plugin
 
         $cloud = $this->cloudUrl();
         $boot = $this->bootstrap();
+
+        // The page draws from what the site already knows; anything that has
+        // to be asked of Guard Cloud is fetched by the page afterwards, as a
+        // fragment from here, and filled in.
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && isset($_GET['guard-part'])) {
+            $this->sendPart($boot, $cloud, (string) $_GET['guard-part']);
+        }
 
         $result = null;
         $error = null;
@@ -706,7 +715,9 @@ class GuardHelperPlugin extends Plugin
      *
      * "Out of date" without a target is a worry rather than an instruction, so
      * the newer version is named. A cloud we could not reach reports unknown
-     * rather than silently implying the agent is current.
+     * rather than silently implying the agent is current. Drawn from what is
+     * stored; when nothing fresh is, a placeholder the page fills in once it
+     * has asked (see sendPart).
      */
     private function versionLine(AgentBootstrap $boot, string $cloud): string
     {
@@ -720,17 +731,52 @@ class GuardHelperPlugin extends Plugin
 
         $agent = $boot->agentVersion();
         if ($agent !== null) {
-            $line = '<span class="ver"><b>Agent</b> ' . $e($agent) . '</span>';
-            $latest = $boot->latestAgentVersion($cloud);
-            if ($latest === null) {
-                $line .= ' <span class="ver-unknown">latest unknown</span>';
-            } elseif (version_compare($agent, $latest, '<')) {
-                $line .= ' <span class="ver-new">update available: ' . $e($latest) . '</span>';
-            }
-            $parts[] = $line;
+            $known = $boot->knownLatestAgentVersion($cloud, $this->lookupCache());
+            $badge = $known['checked']
+                ? $this->latestBadge($agent, $known['version'])
+                : '<span class="ver-unknown" data-guard-part="latest" data-guard-fail="latest unknown">checking for updates&hellip;</span>';
+            $parts[] = '<span class="ver"><b>Agent</b> ' . $e($agent) . '</span> ' . $badge;
         }
 
         return $parts === [] ? '' : '<div class="vers">' . implode(' ', $parts) . '</div>';
+    }
+
+    /** "update available: x", "latest unknown", or nothing when current. */
+    private function latestBadge(string $agent, ?string $latest): string
+    {
+        if ($latest === null) {
+            return '<span class="ver-unknown">latest unknown</span>';
+        }
+        if (version_compare($agent, $latest, '<')) {
+            return '<span class="ver-new">update available: ' . htmlspecialchars($latest, ENT_QUOTES, 'UTF-8') . '</span>';
+        }
+
+        return '';
+    }
+
+    /**
+     * Answer the setup page's follow-up request for a part that needed Guard
+     * Cloud, as an HTML fragment. Each lookup is bounded and cached.
+     */
+    private function sendPart(AgentBootstrap $boot, string $cloud, string $part): void
+    {
+        $html = '';
+        if ($part === 'latest') {
+            $agent = $boot->agentVersion();
+            if ($agent !== null) {
+                $latest = $boot->checkLatestAgentVersion($cloud, $this->lookupCache());
+                $html = $this->latestBadge($agent, $latest['version']);
+            }
+        } else {
+            $this->sendJson(404, ['error' => 'Unknown part']);
+        }
+
+        $this->sendJson(200, ['html' => $html]);
+    }
+
+    private function lookupCache(): LookupCache
+    {
+        return LookupCache::forGrav($this->grav);
     }
 
     /** Straight through to the fleet, so this page is not a dead end. */
@@ -880,6 +926,18 @@ class GuardHelperPlugin extends Plugin
     <div class="brand"><span class="mark">G</span><strong>Grav Guard</strong></div>
     <div class="card"><h1>Set up Guard Agent</h1>' . $body . $signup . '</div>
   </div>
+<script>
+  // Fill in the parts that had to be asked of Guard Cloud, after the page
+  // has drawn. A part that fails stays as it is.
+  document.querySelectorAll("[data-guard-part]").forEach(function (el) {
+    var url = new URL(window.location.href);
+    url.search = "?guard-part=" + encodeURIComponent(el.getAttribute("data-guard-part"));
+    fetch(url.toString(), { credentials: "same-origin", headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (j) { var t = document.createElement("template"); t.innerHTML = j.html || ""; el.replaceWith(t.content); })
+      .catch(function () { el.textContent = el.getAttribute("data-guard-fail") || ""; el.removeAttribute("data-guard-part"); });
+  });
+</script>
 </body></html>';
     }
 

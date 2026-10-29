@@ -144,10 +144,30 @@ final class SecurityChecker
         return $advisories;
     }
 
+    /**
+     * Bounded: this runs on the Admin Next dashboard's notifications call, so
+     * a cloud that does not answer may cost it a couple of seconds, not eight.
+     */
     private function httpGet(string $url): ?string
     {
+        if (extension_loaded('curl')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 2,
+                CURLOPT_TIMEOUT => 4,
+                CURLOPT_USERAGENT => 'GuardHelper',
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+            ]);
+            $body = curl_exec($ch);
+            $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+
+            return ($body !== false && $status >= 200 && $status < 300) ? (string) $body : null;
+        }
+
         $context = stream_context_create([
-            'http' => ['timeout' => 8, 'header' => "User-Agent: GuardHelper\r\n"],
+            'http' => ['timeout' => 4, 'header' => "User-Agent: GuardHelper\r\n"],
             'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
         ]);
         $body = @file_get_contents($url, false, $context);

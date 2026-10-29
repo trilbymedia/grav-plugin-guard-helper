@@ -10,6 +10,7 @@ use Grav\Plugin\Api\Exceptions\ValidationException;
 use Grav\Plugin\Api\Response\ApiResponse;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\LookupCache;
 use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use Grav\Plugin\GuardHelper\Security\SecurityChecker;
 use Psr\Http\Message\ResponseInterface;
@@ -19,7 +20,8 @@ use Psr\Http\Message\ServerRequestInterface;
  * Admin2 (API) backend for the browser-only Guard Agent setup.
  *
  * Endpoints behind the admin-next sidebar page + dashboard widget:
- *   GET  /guard-helper/status  — is the agent installed, and where?
+ *   GET  /guard-helper/status  — is the agent installed, and where? (local only)
+ *   GET  /guard-helper/latest  — the newest agent version, asked of Guard Cloud
  *   POST /guard-helper/setup   — download + verify + unpack + pair in-process
  *   POST /guard-helper/repair  — a fresh pairing code for an installed agent
  *   POST /guard-helper/webhook — switch on Grav's scheduler webhook for the agent
@@ -39,9 +41,13 @@ class GuardController extends AbstractApiController
 
         $cloudUrl = $this->cloudUrl();
         $agentVersion = $boot->agentVersion();
-        // Only ask the cloud what the latest is when there is something
-        // installed to compare it against; a fresh site does not need it.
-        $latestAgent = $agentVersion === null ? null : $boot->latestAgentVersion($cloudUrl);
+        // Never asks Guard Cloud: this answers from what is on disk so the
+        // page draws at once. When no fresh answer is stored the page asks
+        // /latest after it has drawn. Only relevant once an agent is installed.
+        $latest = $agentVersion === null
+            ? ['checked' => true, 'version' => null, 'checked_at' => null]
+            : $boot->knownLatestAgentVersion($cloudUrl, $this->lookupCache());
+        $latestAgent = $latest['version'];
 
         return ApiResponse::create([
             'installed'     => $boot->isInstalled(),
@@ -57,9 +63,9 @@ class GuardController extends AbstractApiController
             // Null means we could not ask, NOT that the agent is current — the
             // UI has to say "unknown" rather than imply everything is fine.
             'agent_latest'  => $latestAgent,
-            'agent_outdated' => ($agentVersion !== null && $latestAgent !== null)
-                ? version_compare($agentVersion, $latestAgent, '<')
-                : null,
+            'agent_outdated' => self::outdated($agentVersion, $latestAgent),
+            // False when nothing fresh is stored: the page asks /latest.
+            'agent_latest_checked' => $latest['checked'],
             'requirements'  => [
                 'sodium' => extension_loaded('sodium'),
                 'zip'    => extension_loaded('zip'),
@@ -78,6 +84,35 @@ class GuardController extends AbstractApiController
             // agent to use it. Never carries the token.
             'webhook'       => $boot->isInstalled() ? $this->webhookStatus() : null,
         ]);
+    }
+
+    /**
+     * GET /guard-helper/latest — the newest agent version Guard Cloud offers.
+     * Asks only when nothing fresh is stored, with a short timeout, and
+     * stores the answer (or the failure, briefly) for the status call.
+     */
+    public function latest(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requireSuperAdmin($request);
+
+        $boot = $this->bootstrap();
+        $agentVersion = $boot->agentVersion();
+        $latest = $agentVersion === null
+            ? ['checked' => true, 'version' => null, 'checked_at' => null]
+            : $boot->checkLatestAgentVersion($this->cloudUrl(), $this->lookupCache());
+
+        return ApiResponse::create([
+            'agent_version' => $agentVersion,
+            'agent_latest' => $latest['version'],
+            'agent_outdated' => self::outdated($agentVersion, $latest['version']),
+            'agent_latest_checked' => true,
+        ]);
+    }
+
+    /** Null when either side is unknown: "could not ask" is not "current". */
+    private static function outdated(?string $running, ?string $latest): ?bool
+    {
+        return ($running !== null && $latest !== null) ? version_compare($running, $latest, '<') : null;
     }
 
     /** POST /guard-helper/setup */
@@ -177,6 +212,11 @@ class GuardController extends AbstractApiController
     private function bootstrap(): AgentBootstrap
     {
         return new AgentBootstrap(GRAV_ROOT);
+    }
+
+    private function lookupCache(): LookupCache
+    {
+        return LookupCache::forGrav($this->grav);
     }
 
     private function webhook(): SchedulerWebhook

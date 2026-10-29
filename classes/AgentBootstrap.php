@@ -38,9 +38,32 @@ use ZipArchive;
  */
 final class AgentBootstrap
 {
+    /** How long the newest agent version is kept once Guard Cloud has answered. */
+    public const LATEST_TTL = 21600;
+    /** How long a failed "what is the newest agent?" lookup is kept before asking again. */
+    public const LATEST_FAILURE_TTL = 300;
+
+    /**
+     * Seconds a lookup may take (connect, then total). A version badge is not
+     * worth more than this, and a black-holed cloud used to hold the whole
+     * Guard page for a minute.
+     */
+    private const LOOKUP_CONNECT_TIMEOUT = 3;
+    private const LOOKUP_TIMEOUT = 5;
+    /** The release descriptor during install: small, but the install depends on it. */
+    private const DESCRIPTOR_TIMEOUT = 15;
+    /** The release zip: the one fetch allowed the long timeout. */
+    private const DOWNLOAD_TIMEOUT = 60;
+    private const CONNECT_TIMEOUT = 5;
+
     private string $gravRoot;
     private string $guardDir;
-    /** @var callable(string):?string GET a URL → body, or null on failure */
+    /**
+     * GET a URL → body, or null on failure. Called with the URL, the total
+     * timeout and the connect timeout, in seconds.
+     *
+     * @var callable(string, int, int):?string
+     */
     private $fetcher;
     /** Raw Ed25519 key releases must be signed with. */
     private string $releaseKey;
@@ -187,7 +210,7 @@ final class AgentBootstrap
      *
      * Null on any failure. An unreachable cloud must not turn into a claim
      * that the agent is current, nor into an error on a page whose job is to
-     * report health.
+     * report health. Asks with a short timeout: see LOOKUP_TIMEOUT.
      */
     public function latestAgentVersion(string $cloudUrl): ?string
     {
@@ -201,14 +224,69 @@ final class AgentBootstrap
     }
 
     /**
-     * The signed release descriptor: {manifest, signature, zip_url}.
+     * What is already known about the newest agent, without asking anyone.
+     * This is what a screen draws with.
+     *
+     * @return array{checked:bool, version:?string, checked_at:?int} `checked`
+     *   false means nothing fresh is stored, so the caller should ask
+     *   (checkLatestAgentVersion) after drawing; `version` null with
+     *   `checked` true means Guard Cloud was asked recently and gave no answer
+     */
+    public function knownLatestAgentVersion(string $cloudUrl, LookupCache $cache): array
+    {
+        $entry = $cache->get(self::latestKey($cloudUrl));
+        if ($entry === null) {
+            return ['checked' => false, 'version' => null, 'checked_at' => null];
+        }
+        $version = ($entry['ok'] && is_string($entry['value']) && $entry['value'] !== '') ? $entry['value'] : null;
+
+        return ['checked' => true, 'version' => $version, 'checked_at' => $entry['at']];
+    }
+
+    /**
+     * The newest agent, asking Guard Cloud only when nothing fresh is stored,
+     * and storing the answer either way: a version for LATEST_TTL, a failure
+     * for LATEST_FAILURE_TTL. Bounded by the lookup timeout, and meant to be
+     * called after the screen has drawn, never on the way to drawing it.
+     *
+     * @param bool $force ask even when an answer is stored
+     * @return array{checked:bool, version:?string, checked_at:?int}
+     */
+    public function checkLatestAgentVersion(string $cloudUrl, LookupCache $cache, bool $force = false): array
+    {
+        if (!$force) {
+            $known = $this->knownLatestAgentVersion($cloudUrl, $cache);
+            if ($known['checked']) {
+                return $known;
+            }
+        }
+
+        $version = $this->latestAgentVersion($cloudUrl);
+        $cache->put(
+            self::latestKey($cloudUrl),
+            $version !== null,
+            $version,
+            $version !== null ? self::LATEST_TTL : self::LATEST_FAILURE_TTL
+        );
+
+        return $this->knownLatestAgentVersion($cloudUrl, $cache);
+    }
+
+    private static function latestKey(string $cloudUrl): string
+    {
+        return 'latest-agent|' . rtrim($cloudUrl, '/');
+    }
+
+    /**
+     * The signed release descriptor: {manifest, signature, zip_url}, fetched
+     * with the short lookup timeout.
      *
      * @return array{manifest:mixed, signature:mixed, zip_url:mixed}|null
      */
     private function descriptor(string $cloud): ?array
     {
         try {
-            $json = ($this->fetcher)($cloud . '/agent/release/manifest');
+            $json = ($this->fetcher)($cloud . '/agent/release/manifest', self::LOOKUP_TIMEOUT, self::LOOKUP_CONNECT_TIMEOUT);
         } catch (BootstrapException $e) {
             return null;
         }
@@ -339,7 +417,7 @@ final class AgentBootstrap
      */
     private function download(string $cloud): array
     {
-        $json = ($this->fetcher)($cloud . '/agent/release/manifest');
+        $json = ($this->fetcher)($cloud . '/agent/release/manifest', self::DESCRIPTOR_TIMEOUT, self::CONNECT_TIMEOUT);
         if ($json === null) {
             throw new BootstrapException("Couldn't reach the release service at $cloud.");
         }
@@ -358,7 +436,7 @@ final class AgentBootstrap
         if (self::origin($zipUrl) !== self::origin($cloud)) {
             throw new BootstrapException("The agent release is not served from $cloud — refusing to install it.");
         }
-        $zip = ($this->fetcher)($zipUrl);
+        $zip = ($this->fetcher)($zipUrl, self::DOWNLOAD_TIMEOUT, self::CONNECT_TIMEOUT);
         if ($zip === null) {
             throw new BootstrapException('The agent download failed.');
         }
@@ -653,9 +731,12 @@ final class AgentBootstrap
      * checked. A 3xx is a failure with its own message, so a mistyped cloud
      * URL (http, or www vs apex) is easy to spot.
      *
+     * @param int $timeout the whole request, in seconds
+     * @param int $connectTimeout just the connection, in seconds (curl only;
+     *   the stream wrapper applies $timeout to both)
      * @throws BootstrapException when the cloud answers with a redirect
      */
-    private static function httpGet(string $url): ?string
+    private static function httpGet(string $url, int $timeout = self::DOWNLOAD_TIMEOUT, int $connectTimeout = self::CONNECT_TIMEOUT): ?string
     {
         if (strtolower((string) parse_url($url, PHP_URL_SCHEME)) !== 'https') {
             return null;
@@ -668,7 +749,8 @@ final class AgentBootstrap
                 CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
                 CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
-                CURLOPT_TIMEOUT => 60,
+                CURLOPT_CONNECTTIMEOUT => $connectTimeout,
+                CURLOPT_TIMEOUT => $timeout,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_SSL_VERIFYHOST => 2,
             ]);
@@ -680,7 +762,7 @@ final class AgentBootstrap
         }
 
         $ctx = stream_context_create([
-            'http' => ['follow_location' => 0, 'timeout' => 60, 'ignore_errors' => true],
+            'http' => ['follow_location' => 0, 'timeout' => $timeout, 'ignore_errors' => true],
             'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
         ]);
         $body = @file_get_contents($url, false, $ctx);
