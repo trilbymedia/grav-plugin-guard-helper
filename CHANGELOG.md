@@ -1,3 +1,9 @@
+# v1.0.1
+## 10/31/2026
+
+1. [](#bugfix)
+    * The plugin was installed switched off, so it had to be enabled by hand before the Guard page, widget or setup appeared. It is now on after install, as plugins normally are. It still shows nothing to anyone but a super-admin
+
 # v1.0.0
 ## 10/31/2026
 

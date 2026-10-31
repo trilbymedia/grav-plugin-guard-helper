@@ -2,7 +2,7 @@ name: Guard Helper
 slug: guard-helper
 type: plugin
 testing: false
-version: 1.0.0
+version: 1.0.1
 description: Optional companion plugin for Grav Guard — browser-based agent setup, a free vulnerability check, and the scheduler webhook for hosts without cron. The Guard control channel never depends on this plugin.
 icon: shield
 author:
@@ -37,7 +37,7 @@ form:
       type: toggle
       label: PLUGIN_ADMIN.PLUGIN_STATUS
       highlight: 1
-      default: 0
+      default: 1
       options:
         1: PLUGIN_ADMIN.ENABLED
         0: PLUGIN_ADMIN.DISABLED
