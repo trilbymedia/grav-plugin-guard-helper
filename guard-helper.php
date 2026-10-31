@@ -1076,6 +1076,15 @@ class GuardHelperPlugin extends Plugin
         return LookupCache::forGrav($this->grav);
     }
 
+    /** A value to paste into Guard Cloud, with a Copy button that says when it worked. */
+    private function codeRow(string $value): string
+    {
+        $v = htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+
+        return '<div class="coderow"><div class="code">' . $v . '</div>'
+            . '<button type="button" class="secondary copy" data-guard-copy="' . $v . '">Copy</button></div>';
+    }
+
     /** Straight through to the fleet, so this page is not a dead end. */
     private function manageLink(string $cloud): string
     {
@@ -1112,7 +1121,7 @@ class GuardHelperPlugin extends Plugin
                     <p>Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within '
                         . (int) ($result['ttl'] / 60) . ' minutes. Single-use; generate another if it expires.</p>
                     <label>Pairing code</label>
-                    <div class="code">' . $e($result['code']) . '</div>
+                    ' . $this->codeRow($result['code']) . '
                 </div>';
 
             [$tone, $title, $help] = $this->connectionCopy($boot, !empty($result['just_installed']));
@@ -1124,7 +1133,7 @@ class GuardHelperPlugin extends Plugin
                 . $this->versionLine($boot, $cloud) . '
                 <p class="muted">' . $help . '</p>
                 <label>Agent endpoint</label>
-                <div class="code">' . $e($endpoint) . '</div>'
+                ' . $this->codeRow($endpoint)
                 . $this->cronDetails($boot)
                 . $this->webhookNotice($webhook) . '
                 <form method="post">
@@ -1189,6 +1198,10 @@ class GuardHelperPlugin extends Plugin
   h1{font-size:20px;margin:0 0 6px}
   label{display:block;font-weight:600;font-size:13px;margin:16px 0 4px}
   .code{font-family:ui-monospace,Menlo,monospace;background:#f4f4f5;border:1px solid var(--border);border-radius:6px;padding:10px 12px;word-break:break-all}
+  .coderow{display:flex;gap:8px;align-items:stretch}
+  .coderow .code{flex:1}
+  .coderow .copy{margin:0;white-space:nowrap;min-width:92px}
+  .copy.copied{color:var(--ok);border-color:var(--ok)}
   code{font-family:ui-monospace,Menlo,monospace;background:#f4f4f5;padding:1px 5px;border-radius:4px;font-size:.92em}
   button{margin-top:16px;width:100%;background:var(--primary);color:#fff;border:0;border-radius:6px;padding:12px;font-size:15px;font-weight:600;cursor:pointer}
   button:hover:not(:disabled){background:#1f57d6}
@@ -1258,6 +1271,38 @@ class GuardHelperPlugin extends Plugin
       .catch(function () { el.textContent = el.getAttribute("data-guard-fail") || ""; el.removeAttribute("data-guard-part"); });
   }
   document.querySelectorAll("[data-guard-part]").forEach(function (el) { guardPart(el, el.getAttribute("data-guard-part")); });
+  // Copy, and say so. The clipboard API needs a secure context, so the old
+  // execCommand route is the fallback; if both are refused the value is
+  // selected, ready for Ctrl/Cmd+C.
+  function guardCopy(text, source) {
+    function legacy() {
+      var t = document.createElement("textarea");
+      t.value = text; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+      document.body.appendChild(t); t.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(t);
+      return ok ? Promise.resolve() : Promise.reject();
+    }
+    var p = navigator.clipboard && window.isSecureContext ? navigator.clipboard.writeText(text).catch(legacy) : legacy();
+    return p.catch(function () {
+      var r = document.createRange(); r.selectNodeContents(source);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      return Promise.reject();
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-guard-copy]");
+    if (!b) { return; }
+    var code = b.parentNode.querySelector(".code");
+    clearTimeout(b._guardT);
+    guardCopy(b.getAttribute("data-guard-copy"), code).then(function () {
+      b.textContent = "Copied \u2713"; b.classList.add("copied");
+    }, function () {
+      b.textContent = "Press \u2318C"; b.classList.remove("copied");
+    }).then(function () {
+      b._guardT = setTimeout(function () { b.textContent = "Copy"; b.classList.remove("copied"); }, 1800);
+    });
+  });
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-guard-recheck]");
     var box = document.getElementById("guard-security");

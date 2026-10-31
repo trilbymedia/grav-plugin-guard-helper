@@ -126,8 +126,36 @@ class GuardHelperPage extends HTMLElement {
 		}
 	}
 
-	async _copy(text) {
-		try { await navigator.clipboard.writeText(text); } catch (_) { /* clipboard blocked */ }
+	// Copy, and say so on the button. The clipboard API needs a secure
+	// context, so execCommand is the fallback; if both are refused the value
+	// is selected, ready for Ctrl/Cmd+C.
+	async _copy(btn) {
+		const text = btn.getAttribute('data-copy') || '';
+		let ok = false;
+		try {
+			if (navigator.clipboard && window.isSecureContext) {
+				await navigator.clipboard.writeText(text);
+				ok = true;
+			}
+		} catch (_) { /* fall through to the old route */ }
+		if (!ok) {
+			const t = document.createElement('textarea');
+			t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+			this.shadowRoot.appendChild(t); t.select();
+			try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+			t.remove();
+		}
+		if (!ok) {
+			const code = btn.parentElement?.querySelector('.code');
+			if (code) {
+				const r = document.createRange(); r.selectNodeContents(code);
+				const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+			}
+		}
+		clearTimeout(btn._copyTimer);
+		btn.textContent = ok ? 'Copied ✓' : 'Press ⌘C';
+		btn.classList.toggle('copied', ok);
+		btn._copyTimer = setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
 	}
 
 	async _repair() {
@@ -167,7 +195,7 @@ class GuardHelperPage extends HTMLElement {
 		this.shadowRoot.getElementById('webhook-btn')?.addEventListener('click', () => this._enableWebhook());
 		this.shadowRoot.getElementById('sec-refresh')?.addEventListener('click', () => this._loadSecurity(true));
 		this.shadowRoot.querySelectorAll('[data-copy]').forEach((el) =>
-			el.addEventListener('click', () => this._copy(el.getAttribute('data-copy'))));
+			el.addEventListener('click', () => this._copy(el)));
 
 		if (this._scrollToSecurity && this._state.phase !== 'loading' && this._state.security.phase !== 'loading') {
 			this._scrollToSecurity = false;
@@ -529,6 +557,8 @@ class GuardHelperPage extends HTMLElement {
 		.lbl { font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em;
 			color:var(--muted-foreground,#71717a); }
 		.coderow { display:flex; gap:8px; align-items:stretch; }
+		.coderow .btn { min-width:92px; }
+		.btn.ghost.copied { color:var(--gh-ok-fg,#15803d); border-color:var(--gh-ok,#16a34a); }
 		.code { flex:1; font-family:ui-monospace,Menlo,monospace; word-break:break-all;
 			background:var(--muted,#f4f4f5); border:1px solid var(--border,#e4e4e7);
 			border-radius:8px; padding:10px 12px; font-size:13px; }

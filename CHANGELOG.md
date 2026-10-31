@@ -1,3 +1,11 @@
+# v1.0.2
+## 10/31/2026
+
+1. [](#improved)
+    * The pairing code and agent endpoint have a **Copy** button on the classic Guard page too, not only in Admin Next
+2. [](#bugfix)
+    * Copy gave no sign that it worked. The button now says "Copied ✓" for a moment, and when the browser blocks the clipboard it falls back to the older copy method, then selects the value and says "Press ⌘C"
+
 # v1.0.1
 ## 10/31/2026
 
