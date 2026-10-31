@@ -17,7 +17,8 @@ final class CloudUrl
     public const DEFAULT = 'https://cloud.gravguard.com';
     private const MOVED = ['https://gravguard.com', 'https://www.gravguard.com'];
 
-    public static function from(mixed $configured): string
+    /** @param mixed $configured whatever the config holds */
+    public static function from($configured): string
     {
         $url = rtrim(trim((string) ($configured ?? '')), '/');
         if ($url === '' || in_array(strtolower($url), self::MOVED, true)) {

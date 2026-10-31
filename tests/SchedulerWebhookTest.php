@@ -786,7 +786,7 @@ final class SchedulerWebhookTest extends TestCase
         ];
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('pathsTheAgentWouldNotCall')]
+    /** @dataProvider pathsTheAgentWouldNotCall */
     public function testAPathTheAgentWouldNotCallIsRepairedInTheBaseFile(string $path): void
     {
         // The oracle is the agent's own line, SchedulerRunner::webhookConfig().
@@ -802,7 +802,7 @@ final class SchedulerWebhookTest extends TestCase
         $this->assertSame('/scheduler/webhook', $this->get($this->base())['modern']['webhook']['path']);
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('pathsTheAgentWouldNotCall')]
+    /** @dataProvider pathsTheAgentWouldNotCall */
     public function testAPathTheAgentWouldNotCallIsRepairedInAnEnvironmentFile(string $path): void
     {
         $token = $this->strongToken();
@@ -817,7 +817,7 @@ final class SchedulerWebhookTest extends TestCase
         $this->assertSame('/scheduler/webhook', $this->get($this->base())['modern']['webhook']['path']);
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('pathsTheAgentCalls')]
+    /** @dataProvider pathsTheAgentCalls */
     public function testAPathTheAgentCallsAtTheRouteIsLeftAlone(string $path): void
     {
         $this->put($this->base(), ['modern' => ['webhook' => ['enabled' => true, 'token' => $this->strongToken(), 'path' => $path]]]);

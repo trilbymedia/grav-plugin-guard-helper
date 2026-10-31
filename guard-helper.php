@@ -8,6 +8,7 @@ use Grav\Common\Plugin;
 use Grav\Common\Utils;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
+use Grav\Plugin\GuardHelper\CloudUrl;
 use Grav\Plugin\GuardHelper\LookupCache;
 use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use Grav\Plugin\GuardHelper\SuperAdmin;
@@ -227,6 +228,9 @@ class GuardHelperPlugin extends Plugin
         $twig->twig_vars['guard_setup_url'] = $this->absoluteUrl($this->adminRoute());
         $twig->twig_vars['guard_signup_url'] = $this->signupUrl();
         $twig->twig_vars['guard_signup_host'] = $this->signupHost();
+        // Only a PHP that needs action reaches the widget.
+        $php = \Grav\Plugin\GuardHelper\Security\SecurityChecker::php();
+        $twig->twig_vars['guard_php'] = $php['status'] !== 'ok' ? $php : null;
 
         $widget = ['name' => 'Grav Guard', 'template' => 'dashboard-guard'];
         $widgets = $twig->plugins_hooked_dashboard_widgets_top ?? [];
@@ -398,6 +402,20 @@ class GuardHelperPlugin extends Plugin
                     // route: an Admin Next session is not a frontend session.
                     'url'   => $this->absoluteUrl($this->adminNextRoute()),
                 ],
+            ];
+        }
+
+        // A PHP that gets no security fixes at all: a banner until it's upgraded.
+        // One whose fixes end soon is shown on the Guard page only.
+        $php = \Grav\Plugin\GuardHelper\Security\SecurityChecker::php();
+        if ($php['status'] === 'unsupported') {
+            $notifications['top'][] = [
+                'id'             => 'guard-helper-php',
+                'title'          => $php['title'],
+                'message'        => $php['detail'],
+                'icon'           => 'ShieldAlert',
+                'reappear_after' => '+1 week',
+                'action'         => ['label' => 'Review', 'url' => $this->absoluteUrl($this->adminNextRoute()) . '#security'],
             ];
         }
 
@@ -950,7 +968,24 @@ class GuardHelperPlugin extends Plugin
                 . '<p class="muted">Checking this site&rsquo;s packages against the Guard advisory feed&hellip;</p></div>'
             : $this->securityBody($result);
 
-        return '<div class="card sec" id="security"><h2>Vulnerability check</h2>' . $body . '</div>';
+        return '<div class="card sec" id="security"><h2>Vulnerability check</h2>' . $this->phpBody() . $body . '</div>';
+    }
+
+    /**
+     * Whether this site's PHP still gets security fixes, from the site alone,
+     * above the package results (Check again redraws only those).
+     */
+    private function phpBody(): string
+    {
+        $php = \Grav\Plugin\GuardHelper\Security\SecurityChecker::php();
+        $e = static function ($v): string {
+            return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        };
+        $tone = ['unsupported' => 'red', 'ending' => 'amber'][$php['status']] ?? 'green';
+
+        return '<div class="state ' . $tone . '" id="guard-php"><strong>' . $e($php['title']) . '</strong>'
+            . ($php['detail'] !== '' ? '<p class="muted">' . $e($php['detail']) . '</p>' : '')
+            . '</div>';
     }
 
     /**

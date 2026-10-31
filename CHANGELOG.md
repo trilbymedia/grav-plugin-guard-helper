@@ -1,3 +1,15 @@
+# v1.0.0
+## 10/31/2026
+
+1. [](#new)
+    * First stable release, and the first in GPM
+    * The Vulnerability check starts with this site's PHP: whether that version still gets security fixes and, when it doesn't or soon won't, what to move to. Grav 1.7 sites are pointed at PHP 8.3, the newest PHP 1.7 runs on, and Grav 2 sites at 8.3 or newer. PHP 7.4 to 8.1 get no security fixes at all, including for the critical flaws PHP fixed in 2026 only for 8.2 and up, so they show in red. Admin Next also raises a dashboard banner for them, and the classic dashboard widget shows the warning. A PHP version whose fixes end within six months, or that is older than 8.3, shows in amber on the Guard page
+2. [](#improved)
+    * Runs on PHP 7.4 and up (was 8.1), so Grav 1.7 sites still on an older PHP can be set up from the browser and watched. The tests run on PHP 7.4, 8.3 and 8.4
+    * The plugin description and README no longer list SSO login and save-event pings, which were never built
+3. [](#bugfix)
+    * The classic Guard page and the frontend setup route failed with "Class 'Grav\Plugin\CloudUrl' not found" since 0.2.0-beta.9, on every PHP version. A new test checks that every class the plugin names is imported
+
 # v0.2.0-beta.9
 ## 10/29/2026
 

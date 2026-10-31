@@ -52,14 +52,13 @@ admin-next's `TopBanner`).
 
 ## Free vulnerability check
 
-The Guard page (both admins) has a **Vulnerability check** that matches this site's installed core, plugin and theme versions against Guard Cloud's public advisory feed (`<cloud_url>/feed/advisories.json`). Matching happens on the site, so the package list never leaves it. Each finding lists the package, the installed version, the advisory, its severity and the version that fixes it. When the feed can't be fetched the check says it is unknown rather than reporting the site clean. In Admin Next, a site with findings also gets a dashboard banner whose **Review** opens this list.
+The Guard page (both admins) has a **Vulnerability check**. It starts with this site's PHP: whether that version still gets security fixes and, when it doesn't or soon won't, what to move to (PHP 8.3 on Grav 1.7, the newest it runs on; 8.3 or newer on Grav 2). A PHP version with no security fixes left also gets a dashboard banner in Admin Next and a warning in the classic dashboard widget. The dates are PHP's published end of security support, so the warning moves on by itself.
 
-## Also in this plugin (Phase 3)
+Below that, it matches this site's installed core, plugin and theme versions against Guard Cloud's public advisory feed (`<cloud_url>/feed/advisories.json`). Matching happens on the site, so the package list never leaves it. Each finding lists the package, the installed version, the advisory, its severity and the version that fixes it. When the feed can't be fetched the check says it is unknown rather than reporting the site clean. In Admin Next, a site with findings also gets a dashboard banner whose **Review** opens this list.
 
-- Free in-admin vulnerability checker (see above)
-- One-click SSO login token consumption (off by default, scoped-key gated)
-- Guard Shield request filtering (virtual patching) — parked: the code is kept, but it is off, has no settings, and fetches nothing
-- Save-event pings for real-time backup
+## Parked
+
+Guard Shield request filtering (virtual patching): the code is kept, but it is off, has no settings, and fetches nothing.
 
 The Guard **control channel never depends on this plugin** — fleet
 management, updates, rescue, and backups are handled by the standalone Guard
@@ -67,7 +66,8 @@ Agent and keep working if this plugin (or Grav itself) is broken or absent.
 
 ## Requirements
 
-- Grav 2.0+; PHP 8.1+ with ext-sodium and ext-zip (for the agent bootstrap)
+- Grav 1.7.51+ or Grav 2
+- PHP 7.4+ with ext-sodium and ext-zip (for the agent bootstrap). PHP 7.4 to 8.1 get no security fixes any more, so the plugin warns about them and recommends PHP 8.3
 
 ## Development
 

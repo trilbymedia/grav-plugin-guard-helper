@@ -39,15 +39,20 @@ final class SecurityChecker
      *
      * @param bool $refresh fetch the feed even when a fresh copy is stored
      * @param bool $askCloud false to use only a stored copy (a screen drawing)
-     * @return array{status:string, checked_at:?string, package_count:int, advisory_count:?int, findings:array<int,array<string,mixed>>}
+     * `php` is whether this site's PHP still gets security fixes
+     * (PhpSupport::check), worked out on the site, so it is there whatever
+     * the feed did.
+     *
+     * @return array{status:string, checked_at:?string, package_count:int, advisory_count:?int, findings:array<int,array<string,mixed>>, php:array<string,mixed>}
      */
     public function run(string $feedUrl, bool $refresh = false, bool $askCloud = true): array
     {
         $installed = $this->installedPackages();
+        $php = self::php();
         $source = new AdvisoryFeed($feedUrl, $this->cache ?? LookupCache::forGrav($this->grav));
         $feed = $askCloud ? $source->load($refresh) : $source->stored();
         if ($feed === null) {
-            return ['status' => 'pending', 'checked_at' => null, 'package_count' => count($installed), 'advisory_count' => null, 'findings' => []];
+            return ['status' => 'pending', 'checked_at' => null, 'package_count' => count($installed), 'advisory_count' => null, 'findings' => [], 'php' => $php];
         }
 
         return [
@@ -56,7 +61,14 @@ final class SecurityChecker
             'package_count' => count($installed),
             'advisory_count' => $feed['ok'] ? count($feed['advisories']) : null,
             'findings' => $feed['ok'] ? self::match($installed, $feed['advisories']) : [],
+            'php' => $php,
         ];
+    }
+
+    /** @return array<string,mixed> PhpSupport::check() for the PHP running this request */
+    public static function php(): array
+    {
+        return PhpSupport::check(PHP_VERSION, defined('GRAV_VERSION') ? (string) GRAV_VERSION : '');
     }
 
     /**

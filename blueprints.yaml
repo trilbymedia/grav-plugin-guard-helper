@@ -1,9 +1,9 @@
 name: Guard Helper
 slug: guard-helper
 type: plugin
-testing: true
-version: 0.2.0-beta.9
-description: Optional companion plugin for Grav Guard — browser-based agent setup, an in-admin health checker, and SSO token consumption. The Guard control channel never depends on this plugin.
+testing: false
+version: 1.0.0
+description: Optional companion plugin for Grav Guard — browser-based agent setup, a free vulnerability check, and the scheduler webhook for hosts without cron. The Guard control channel never depends on this plugin.
 icon: shield
 author:
   name: Trilby Media
@@ -28,7 +28,7 @@ compatibility:
 
 dependencies:
   - { name: grav, version: ">=1.7.51" }
-  - { name: php, version: ">=8.1" }
+  - { name: php, version: ">=7.4" }
 
 form:
   validation: loose

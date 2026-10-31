@@ -45,6 +45,13 @@
             </a>
         {% endif %}
 
+        {% if guard_php %}
+            <p style="margin:14px 0 4px;color:{{ guard_php.status == 'unsupported' ? '#dc2626' : '#d97706' }};font-weight:600;">
+                <i class="fa fa-exclamation-triangle"></i> {{ guard_php.title }}
+            </p>
+            <p style="margin:0;">{{ guard_php.detail }}</p>
+        {% endif %}
+
         <p style="margin:14px 0 0;padding-top:12px;border-top:1px solid rgba(0,0,0,.08);font-size:13px;color:#888;">
             No Guard Cloud account yet?
             <a href="{{ guard_signup_url }}" target="_blank" rel="noopener">Create a free account at {{ guard_signup_host }}</a>

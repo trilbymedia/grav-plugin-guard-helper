@@ -8,7 +8,6 @@ use FilesystemIterator;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
 use Grav\Plugin\GuardHelper\ReleaseVerifier;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -96,11 +95,11 @@ final class AgentBootstrapTest extends TestCase
     private function serving(string $descriptor, string $zip): callable
     {
         return static function (string $url) use ($descriptor, $zip): ?string {
-            if (str_ends_with($url, '/agent/release/manifest')) {
+            if (self::endsWith($url, '/agent/release/manifest')) {
                 return $descriptor;
             }
 
-            return str_starts_with($url, 'https://cloud.test/agent/release/zip') ? $zip : null;
+            return self::startsWith($url, 'https://cloud.test/agent/release/zip') ? $zip : null;
         };
     }
 
@@ -141,7 +140,7 @@ final class AgentBootstrapTest extends TestCase
         [$descriptor, $zip] = $this->release(['agent.php' => '<?php'], null, 'https://evil.test/agent.zip');
 
         $this->assertRefused($this->boot(static function (string $url) use ($descriptor, $zip): ?string {
-            return str_ends_with($url, '/agent/release/manifest') ? $descriptor : $zip;
+            return self::endsWith($url, '/agent/release/manifest') ? $descriptor : $zip;
         }), '/not served from/');
     }
 
@@ -370,7 +369,7 @@ final class AgentBootstrapTest extends TestCase
         $this->assertSame('https://Example.com/blog', $config()['site_url'], 'never back to http');
     }
 
-    #[DataProvider('httpsUpgrades')]
+    /** @dataProvider httpsUpgrades */
     public function testHttpsUpgradeComparison(string $current, string $offered, bool $expected): void
     {
         $method = new \ReflectionMethod(AgentBootstrap::class, 'isHttpsUpgrade');
@@ -598,9 +597,9 @@ final class AgentBootstrapTest extends TestCase
         [$descriptor, $zip] = $this->release(['agent.php' => '<?php']);
         $timeouts = [];
         $boot = $this->boot(static function (string $url, int $timeout = 0, int $connect = 0) use (&$timeouts, $descriptor, $zip): ?string {
-            $timeouts[str_ends_with($url, '/manifest') ? 'manifest' : 'zip'] = [$timeout, $connect];
+            $timeouts[self::endsWith($url, '/manifest') ? 'manifest' : 'zip'] = [$timeout, $connect];
 
-            return str_ends_with($url, '/manifest') ? $descriptor : $zip;
+            return self::endsWith($url, '/manifest') ? $descriptor : $zip;
         });
         try {
             $boot->install('https://cloud.test');
@@ -627,5 +626,16 @@ final class AgentBootstrapTest extends TestCase
             $item->isDir() ? @rmdir($item->getPathname()) : @unlink($item->getPathname());
         }
         @rmdir($dir);
+    }
+
+    // str_ends_with()/str_starts_with() are PHP 8; the plugin and its tests run on 7.4.
+    private static function endsWith(string $haystack, string $needle): bool
+    {
+        return $needle === '' || substr($haystack, -strlen($needle)) === $needle;
+    }
+
+    private static function startsWith(string $haystack, string $needle): bool
+    {
+        return strncmp($haystack, $needle, strlen($needle)) === 0;
     }
 }

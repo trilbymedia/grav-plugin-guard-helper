@@ -421,7 +421,17 @@ class GuardHelperPage extends HTMLElement {
 				</table></div>`;
 		}
 
-		return `<section class="card sec" id="security" aria-labelledby="sec-title">${head.replace('<h2>', '<h2 id="sec-title">')}${body}</section>`;
+		return `<section class="card sec" id="security" aria-labelledby="sec-title">${head.replace('<h2>', '<h2 id="sec-title">')}${this._php(d.php)}${body}</section>`;
+	}
+
+	/** Whether this site's PHP still gets security fixes; the words come from the server. */
+	_php(php) {
+		if (!php || !php.title) return '';
+		const row = { unsupported: 'bad-row', ending: 'warn-row' }[php.status] || 'ok-row';
+		return `<div class="status-row ${row}"><span class="dot"></span><div>
+			<strong>${esc(php.title)}</strong>
+			${php.detail ? `<p class="hint">${esc(php.detail)}</p>` : ''}
+			</div></div>`;
 	}
 
 	_findingRow(f) {
