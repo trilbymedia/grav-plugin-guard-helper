@@ -9,6 +9,7 @@ use Grav\Common\Utils;
 use Grav\Plugin\GuardHelper\AgentBootstrap;
 use Grav\Plugin\GuardHelper\BootstrapException;
 use Grav\Plugin\GuardHelper\CloudUrl;
+use Grav\Plugin\GuardHelper\JobList;
 use Grav\Plugin\GuardHelper\LookupCache;
 use Grav\Plugin\GuardHelper\SchedulerWebhook;
 use Grav\Plugin\GuardHelper\SuperAdmin;
@@ -87,7 +88,31 @@ class GuardHelperPlugin extends Plugin
             'onApiPluginPageInfo'         => ['onApiPluginPageInfo', 0],
             'onApiDashboardWidgets'       => ['onApiDashboardWidgets', 0],
             'onApiDashboardNotifications' => ['onApiDashboardNotifications', 0],
+
+            // Last, so core and every plugin have registered their jobs.
+            'onSchedulerInitialized'      => ['onSchedulerInitialized', -1000],
         ];
+    }
+
+    /**
+     * Keep the list of every scheduler job (core and plugin ones included)
+     * where the Guard Agent reads it, so Guard Cloud's Cron page shows them
+     * all. Never gets in the way of the scheduler run itself.
+     */
+    public function onSchedulerInitialized(Event $event): void
+    {
+        try {
+            $scheduler = $event['scheduler'] ?? null;
+            if (!is_object($scheduler)) {
+                return;
+            }
+            $locator = $this->grav['locator'];
+            $dir = $locator->findResource('user-data://guard-helper', true, true)
+                ?: rtrim(GRAV_ROOT, '/') . '/user/data/guard-helper';
+            JobList::write((string) $dir, JobList::fromScheduler($scheduler));
+        } catch (\Throwable $e) {
+            // A list Guard Cloud shows is not worth a failed scheduler run.
+        }
     }
 
     /** Zero-dep PSR-4 autoloader for our own classes (no composer at runtime). */

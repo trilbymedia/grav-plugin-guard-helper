@@ -4,6 +4,7 @@
 1. [](#new)
     * Permission switches on the Guard page: **Allow remote restore**, **Allow rescue** and **Allow one-click login**. Each is off until a super-admin turns it on here, which replaces the `bin/pair --enable-scope` command. Guard Cloud sends the key for each one on its own; the switch approves it, and Guard Cloud still can't turn any of these on itself. Needs Guard Agent 1.0.17
 2. [](#improved)
+    * Keeps a list of every scheduler job Grav knows, including the ones Grav core and plugins add (cache-clear, cache-purge, backups, plugin jobs), with their schedules, so Guard Cloud's Cron page shows them all instead of only the custom jobs. Needs Guard Agent 1.0.18
     * Opening the Guard page records the site's own address in the agent when it has none (an agent installed from the command line without `--site-url`), so the login-link hardening fix no longer needs a pairing code or the command line. An address already recorded is never replaced
 
 # v1.0.2
