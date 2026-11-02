@@ -26,6 +26,7 @@ use Psr\Http\Message\ServerRequestInterface;
  *   POST /guard-helper/setup   — download + verify + unpack + pair in-process
  *   POST /guard-helper/repair  — a fresh pairing code for an installed agent
  *   POST /guard-helper/webhook — switch on Grav's scheduler webhook for the agent
+ *   POST /guard-helper/scopes  — turn remote restore, rescue or one-click login on/off
  *
  * All are super-admin only: installing software and minting a per-site key is
  * not a delegate-able action. The trust-critical cloud URL comes from plugin
@@ -39,6 +40,13 @@ class GuardController extends AbstractApiController
         $this->requireSuperAdmin($request);
 
         $boot = $this->bootstrap();
+        // An agent installed from the command line may not know the site's
+        // address yet; opening this page is enough to record it.
+        try {
+            $boot->pinSiteUrl($this->siteRoot());
+        } catch (\Throwable $e) {
+            // Not worth failing the page over.
+        }
 
         $cloudUrl = $this->cloudUrl();
         $agentVersion = $boot->agentVersion();
@@ -87,7 +95,35 @@ class GuardController extends AbstractApiController
             // where the agent cannot start Grav. Only asked once there is an
             // agent to use it. Never carries the token.
             'webhook'       => $boot->isInstalled() ? $this->webhookStatus() : null,
+            // Remote restore, rescue and one-click login: off until switched on
+            // here. Null when there is no agent to ask.
+            'scopes'        => $boot->scopes(),
         ]);
+    }
+
+    /**
+     * POST /guard-helper/scopes {scope, enabled} — the switch for one scoped
+     * permission. Turning one on approves the key Guard Cloud offered for
+     * it; Guard Cloud can never do that itself, which is why this lives
+     * behind the site's own super-admin login.
+     */
+    public function scopes(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requireSuperAdmin($request);
+
+        $body = $this->getRequestBody($request);
+        $scope = (string) ($body['scope'] ?? '');
+        $on = filter_var($body['enabled'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        try {
+            $scopes = $this->bootstrap()->setScope($scope, $on);
+        } catch (BootstrapException $e) {
+            throw new ValidationException($e->getMessage());
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('Guard Helper permission change failed: ' . $e->getMessage(), ['exception' => $e]);
+            throw new ValidationException('Could not change the permission: ' . $e->getMessage());
+        }
+
+        return ApiResponse::create(['scopes' => $scopes]);
     }
 
     /**

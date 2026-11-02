@@ -181,6 +181,17 @@ class GuardHelperPage extends HTMLElement {
 		}
 	}
 
+	async _setScope(scope, on) {
+		if (this._state.busy) return;
+		this._patch({ busy: true, scopeError: null });
+		try {
+			const r = await this._api('POST', '/guard-helper/scopes', { scope, enabled: on });
+			this._patch({ busy: false, data: { ...(this._state.data || {}), scopes: r.scopes } });
+		} catch (e) {
+			this._patch({ busy: false, scopeError: e.message });
+		}
+	}
+
 	_patch(patch) {
 		this._state = { ...this._state, ...patch };
 		this._render();
@@ -194,6 +205,8 @@ class GuardHelperPage extends HTMLElement {
 		this.shadowRoot.getElementById('retry-btn')?.addEventListener('click', () => this._loadStatus());
 		this.shadowRoot.getElementById('webhook-btn')?.addEventListener('click', () => this._enableWebhook());
 		this.shadowRoot.getElementById('sec-refresh')?.addEventListener('click', () => this._loadSecurity(true));
+		this.shadowRoot.querySelectorAll('[data-scope]').forEach((el) =>
+			el.addEventListener('change', () => this._setScope(el.dataset.scope, el.checked)));
 		this.shadowRoot.querySelectorAll('[data-copy]').forEach((el) =>
 			el.addEventListener('click', () => this._copy(el)));
 
@@ -335,6 +348,33 @@ class GuardHelperPage extends HTMLElement {
 				${err}
 				${btn}
 			</div>
+		</div>`;
+	}
+
+	// Remote restore, rescue and one-click login. Each is off until switched
+	// on here: turning one on approves the key Guard Cloud offered for it,
+	// which Guard Cloud can never do itself.
+	_scopes(s) {
+		const sc = s.data?.scopes;
+		if (!sc || !['waiting', 'connected'].includes(s.data?.connection)) return '';
+		const rows = SCOPES.map(([scope, label, help]) => {
+			const on = sc.enabled.includes(scope);
+			const ready = on || (sc.supported && sc.offered.includes(scope));
+			const note = on || ready ? '' : (sc.supported
+				? '<span class="pill muted">Waiting for Guard Cloud</span>'
+				: '<span class="pill muted">Needs agent 1.0.17</span>');
+			return `<label class="perm${ready ? '' : ' dim'}">
+				<span class="perm-text"><strong>${esc(label)}</strong> ${note}<span class="sub">${esc(help)}</span></span>
+				<input type="checkbox" class="switch" data-scope="${scope}" ${on ? 'checked' : ''} ${ready && !s.busy ? '' : 'disabled'}>
+			</label>`;
+		}).join('');
+		const err = s.scopeError ? `<div class="err">${esc(s.scopeError)}</div>` : '';
+
+		return `<div class="field">
+			<span class="lbl">Permissions for Guard Cloud</span>
+			<p class="muted">Each is off until you turn it on here. Guard Cloud can never turn these on itself.</p>
+			${err}
+			<div class="perms">${rows}</div>
 		</div>`;
 	}
 
@@ -503,6 +543,7 @@ class GuardHelperPage extends HTMLElement {
 				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
 				${this._pairing(s)}
+				${this._scopes(s)}
 				${this._manage(s)}
 				${this._signup(s)}
 			</div>`;
@@ -653,9 +694,32 @@ class GuardHelperPage extends HTMLElement {
 		.pill { display:inline-block; border-radius:6px; padding:1px 8px; font-size:0.6875rem; font-weight:500; white-space:nowrap; }
 		.pill.bad { background:color-mix(in srgb,var(--gh-bad) 16%,transparent); color:var(--gh-bad-fg); }
 		.pill.warn { background:color-mix(in srgb,var(--gh-warn) 18%,transparent); color:var(--gh-warn-fg); }
-		.pill.muted { background:var(--muted,#f4f4f5); color:var(--muted-foreground,#71717a); }`;
+		.pill.muted { background:var(--muted,#f4f4f5); color:var(--muted-foreground,#71717a); }
+		.perms { display:flex; flex-direction:column; border:1px solid var(--border,#e4e4e7); border-radius:10px; }
+		.perm { display:flex; gap:14px; align-items:center; justify-content:space-between; padding:12px 14px; cursor:pointer; }
+		.perm + .perm { border-block-start:1px solid var(--border,#e4e4e7); }
+		.perm.dim { cursor:default; }
+		.perm.dim strong { color:var(--muted-foreground,#71717a); }
+		.perm-text { display:flex; flex-direction:column; gap:2px; }
+		.perm-text strong { font-size:14px; }
+		.perm-text .pill { align-self:flex-start; }
+		.switch { appearance:none; flex:none; inline-size:36px; block-size:20px; border-radius:99px; margin:0; cursor:pointer;
+			background:var(--input,#e4e4e7); position:relative; transition:background .15s; }
+		.switch::after { content:""; position:absolute; inset-block-start:2px; inset-inline-start:2px; inline-size:16px; block-size:16px;
+			border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.2); transition:transform .15s; }
+		.switch:checked { background:var(--primary,#2463eb); }
+		.switch:checked::after { transform:translateX(16px); }
+		.switch:focus-visible { outline:2px solid var(--ring,#2463eb); outline-offset:2px; }
+		.switch:disabled { opacity:.5; cursor:default; }`;
 	}
 }
+
+// The permission switches, in the order the page lists them.
+const SCOPES = [
+	['restore', 'Allow remote restore', 'Lets Guard Cloud restore a backup onto this site when you ask it to.'],
+	['rescue', 'Allow rescue', 'Lets Guard Cloud repair this site when Grav itself is broken.'],
+	['sso', 'Allow one-click login', 'Lets you sign in to this admin from the Guard Cloud dashboard.'],
+];
 
 // One table from a feed severity to a pill: the words people read, in the
 // host's tones. A severity nobody has named yet still shows, as itself.

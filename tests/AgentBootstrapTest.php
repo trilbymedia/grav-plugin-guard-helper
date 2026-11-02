@@ -335,6 +335,77 @@ final class AgentBootstrapTest extends TestCase
     }
 
     /**
+     * Opening the Guard page records the site's address on an agent that
+     * has none (installed from the command line without --site-url), with no
+     * pairing code, and never replaces one already there.
+     */
+    public function testOpeningTheGuardPagePinsAMissingSiteUrlOnly(): void
+    {
+        $boot = $this->installedAgent();
+
+        $this->assertTrue($boot->pinSiteUrl('https://example.com/'));
+        $this->assertSame('https://example.com', (include $this->gravRoot . '/_guard/data/config.php')['site_url']);
+        $this->assertFalse($boot->pinSiteUrl('https://other.example'));
+        $this->assertSame('https://example.com', (include $this->gravRoot . '/_guard/data/config.php')['site_url']);
+        $this->assertFalse((new AgentBootstrap($this->gravRoot . '/nowhere'))->pinSiteUrl('https://example.com'));
+    }
+
+    /**
+     * The permission switches: nothing is on, and nothing can be turned on,
+     * until Guard Cloud has offered the scope's key; the switch then approves
+     * that key, and turning it off removes it again.
+     */
+    public function testTheSwitchApprovesOnlyAKeyGuardCloudOffered(): void
+    {
+        $boot = $this->installedAgent();
+        $this->assertSame(['supported' => true, 'enabled' => [], 'offered' => []], $boot->scopes());
+
+        try {
+            $boot->setScope('restore', true);
+            $this->fail('turned on with no key offered');
+        } catch (\Grav\Plugin\GuardHelper\BootstrapException $e) {
+            $this->assertStringContainsString('has not sent its key', $e->getMessage());
+        }
+
+        $key = bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));
+        $this->agentState()->set('offer.cloud.restore', $key);
+        $this->assertSame(['restore'], $boot->scopes()['offered']);
+
+        $this->assertSame(['restore'], $boot->setScope('restore', true)['enabled']);
+        $this->assertSame($key, $this->agentState()->get('keyring.cloud.restore'));
+
+        $this->assertSame([], $boot->setScope('restore', false)['enabled']);
+        $this->assertNull($this->agentState()->get('keyring.cloud.restore'));
+    }
+
+    public function testTheSwitchRefusesAnUnknownScope(): void
+    {
+        $boot = $this->installedAgent();
+        $this->expectException(\Grav\Plugin\GuardHelper\BootstrapException::class);
+        $boot->setScope('default', true);
+    }
+
+    private function installedAgent(): AgentBootstrap
+    {
+        $agentSrc = realpath(__DIR__ . '/../../agent');
+        if ($agentSrc === false || !is_file($agentSrc . '/agent.php')) {
+            $this->markTestSkipped('agent source not available beside the helper repo');
+        }
+        [$descriptor, $zip] = $this->release($this->agentFiles($agentSrc));
+        $boot = $this->boot($this->serving($descriptor, $zip));
+        $boot->install('https://cloud.test');
+
+        return $boot;
+    }
+
+    private function agentState(): \GravGuard\Agent\State\StateStore
+    {
+        $config = include $this->gravRoot . '/_guard/data/config.php';
+
+        return new \GravGuard\Agent\State\StateStore($this->gravRoot . '/_guard/data/' . $config['db']);
+    }
+
+    /**
      * The agent sends the scheduler webhook's token over https only, so a
      * site paired while it was on http has to be able to move. That is the
      * one change re-pairing makes to a recorded address: same host, port and

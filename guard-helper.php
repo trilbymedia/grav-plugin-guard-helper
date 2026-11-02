@@ -40,6 +40,13 @@ use RocketTheme\Toolbox\Event\Event;
 class GuardHelperPlugin extends Plugin
 {
     private const NONCE_ACTION = 'guard-helper-setup';
+
+    /** The permission switches, as the Guard page lists them. */
+    private const SCOPE_LABELS = [
+        'restore' => ['Allow remote restore', 'Lets Guard Cloud restore a backup onto this site when you ask it to.'],
+        'rescue' => ['Allow rescue', 'Lets Guard Cloud repair this site when Grav itself is broken.'],
+        'sso' => ['Allow one-click login', 'Lets you sign in to this admin from the Guard Cloud dashboard.'],
+    ];
     private const SLUG = 'guard-helper';
     private const DEFAULT_SETUP_ROUTE = '/_guard-setup';
 
@@ -320,6 +327,7 @@ class GuardHelperPlugin extends Plugin
         $routes->post('/' . self::SLUG . '/setup', [$controller, 'setup']);
         $routes->post('/' . self::SLUG . '/repair', [$controller, 'repair']);
         $routes->post('/' . self::SLUG . '/webhook', [$controller, 'webhookEnable']);
+        $routes->post('/' . self::SLUG . '/scopes', [$controller, 'scopes']);
         $routes->get('/' . self::SLUG . '/security', [$controller, 'security']);
     }
 
@@ -587,6 +595,14 @@ class GuardHelperPlugin extends Plugin
             $this->sendPart($boot, $cloud, (string) $_GET['guard-part']);
         }
 
+        // An agent installed from the command line may not know the site's
+        // address yet; opening this page is enough to record it.
+        try {
+            $boot->pinSiteUrl($this->absoluteUrl(''));
+        } catch (\Throwable $e) {
+            // Not worth failing the page over.
+        }
+
         $result = null;
         $error = null;
         $webhook = null;
@@ -597,6 +613,14 @@ class GuardHelperPlugin extends Plugin
             } elseif ($action === 'webhook') {
                 // Switch the scheduler webhook on without a pairing code.
                 $webhook = $boot->isInstalled() ? $this->ensureWebhook() : null;
+            } elseif ($action === 'scope') {
+                // One of the permission switches: host-side consent, so only
+                // ever here, behind the super-admin check above.
+                try {
+                    $boot->setScope((string) ($_POST['guard-scope'] ?? ''), ($_POST['guard-on'] ?? '') === '1');
+                } catch (BootstrapException $e) {
+                    $error = $e->getMessage();
+                }
             } else {
                 try {
                     // `repair` starts a fresh pairing window on an installed
@@ -1102,6 +1126,49 @@ class GuardHelperPlugin extends Plugin
         return preg_match('/^version:\s*(\S+)/m', $src, $m) ? trim($m[1], "'\"") : '';
     }
 
+    /**
+     * The permission switches: remote restore, rescue and one-click login,
+     * each off until a super-admin turns it on here.
+     */
+    private function scopesSection(AgentBootstrap $boot, ?string $error): string
+    {
+        $scopes = $boot->scopes();
+        if ($scopes === null) {
+            return '';
+        }
+        $e = static fn($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        $rows = '';
+        foreach (self::SCOPE_LABELS as $scope => [$label, $help]) {
+            $on = in_array($scope, $scopes['enabled'], true);
+            $offered = in_array($scope, $scopes['offered'], true);
+            if ($on) {
+                $state = '<span class="pill on">On</span>';
+            } elseif (!$scopes['supported']) {
+                $state = '<span class="pill">Needs agent 1.0.17</span>';
+            } elseif (!$offered) {
+                $state = '<span class="pill">Waiting for Guard Cloud</span>';
+            } else {
+                $state = '<span class="pill">Off</span>';
+            }
+            $button = ($on || ($scopes['supported'] && $offered))
+                ? '<form method="post">
+                        <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
+                        <input type="hidden" name="guard-action" value="scope">
+                        <input type="hidden" name="guard-scope" value="' . $e($scope) . '">
+                        <input type="hidden" name="guard-on" value="' . ($on ? '0' : '1') . '">
+                        <button type="submit" class="secondary">' . ($on ? 'Turn off' : 'Turn on') . '</button>
+                    </form>'
+                : '';
+            $rows .= '<li><div class="perm-top"><strong>' . $e($label) . '</strong>' . $state . '</div>
+                <div class="muted">' . $e($help) . '</div>' . $button . '</li>';
+        }
+        $err = ($error !== null && ($_POST['guard-action'] ?? '') === 'scope') ? '<div class="err">' . $e($error) . '</div>' : '';
+
+        return '<div class="perms"><label>Permissions for Guard Cloud</label>
+            <p class="muted">Each is off until you turn it on here. Guard Cloud can never turn these on itself.</p>'
+            . $err . '<ul class="perm-list">' . $rows . '</ul></div>';
+    }
+
     /** Build the self-contained HTML page. */
     /**
      * @param array<string,mixed>|null $webhook ensure()'s result, when this request ran it
@@ -1143,6 +1210,7 @@ class GuardHelperPlugin extends Plugin
                 </form>'
                 . ($paired && $result === null ? '<p class="muted">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>' : '')
                 . $pairOut
+                . ($paired ? $this->scopesSection($boot, $error) : '')
                 . $this->manageLink($cloud);
         } else {
             $errHtml = $error !== null ? '<div class="err">' . $e($error) . '</div>' : '';
@@ -1239,6 +1307,14 @@ class GuardHelperPlugin extends Plugin
   .signup{margin-top:18px;padding:12px 14px;background:color-mix(in oklab,var(--primary) 8%,transparent);border:1px solid color-mix(in oklab,var(--primary) 25%,transparent);border-radius:8px;font-size:14px}
   .signup a,.signup-foot a{color:var(--primary);font-weight:600}
   .signup-foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
+  .perms{margin-top:18px;padding-top:4px;border-top:1px solid var(--border)}
+  .perm-list{list-style:none;margin:8px 0 0;padding:0}
+  .perm-list li{padding:10px 0;border-top:1px solid var(--border)}
+  .perm-list li:first-child{border-top:0}
+  .perm-list form button.secondary{margin-top:8px}
+  .perm-top{display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:14px}
+  .pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:#f4f4f5;color:var(--muted);white-space:nowrap}
+  .pill.on{background:color-mix(in oklab,var(--ok) 14%,transparent);color:#047857}
   .sec{margin-top:16px}
   .sec h2{font-size:16px;margin:0}
   .sec .state{margin-top:12px}

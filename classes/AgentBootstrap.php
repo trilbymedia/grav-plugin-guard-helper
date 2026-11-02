@@ -710,19 +710,124 @@ final class AgentBootstrap
         if (!is_array($config) || !isset($config['db'])) {
             throw new BootstrapException('The agent configuration is unreadable — re-run setup.');
         }
-        $site = self::siteUrl($siteUrl);
-        if ($site !== null && (!isset($config['site_url']) || self::isHttpsUpgrade((string) $config['site_url'], $site))) {
-            $config['site_url'] = $site;
-            file_put_contents(
-                $configFile,
-                "<?php /* Guard Agent config — pinned host-side; do not expose. */ return "
-                    . var_export($config, true) . ";\n"
-            );
-        }
+        $this->writeSiteUrl($configFile, $config, $siteUrl);
 
         $agentKey = (new $keyClass($this->guardDir . '/keys/agent.key.php'))->load();
 
         return $this->beginPairing($dataDir, $config, $agentKey, $stateClass, $pairClass);
+    }
+
+    /**
+     * Record the site's own base URL in the agent's config when it has none
+     * (or upgrade http to https), the same rule re-pairing follows. Called
+     * when a super-admin opens the Guard page, so an agent installed from the
+     * command line without --site-url learns its address with no extra step.
+     * Never replaces an address that is already set.
+     *
+     * @return bool true when the config was written
+     */
+    public function pinSiteUrl(?string $siteUrl): bool
+    {
+        if (!$this->isInstalled()) {
+            return false;
+        }
+        $configFile = $this->guardDir . '/data/config.php';
+        $config = is_file($configFile) ? @include $configFile : null;
+        if (!is_array($config) || !isset($config['db'])) {
+            return false;
+        }
+
+        return $this->writeSiteUrl($configFile, $config, $siteUrl);
+    }
+
+    /** @param array<string,mixed> $config */
+    private function writeSiteUrl(string $configFile, array $config, ?string $siteUrl): bool
+    {
+        $site = self::siteUrl($siteUrl);
+        if ($site === null || (isset($config['site_url']) && !self::isHttpsUpgrade((string) $config['site_url'], $site))) {
+            return false;
+        }
+        $config['site_url'] = $site;
+
+        return file_put_contents(
+            $configFile,
+            "<?php /* Guard Agent config — pinned host-side; do not expose. */ return "
+                . var_export($config, true) . ";\n"
+        ) !== false;
+    }
+
+    /** The scoped permissions a switch can turn on, in the order the page lists them. */
+    public const SCOPES = ['restore', 'rescue', 'sso'];
+
+    /**
+     * The scoped permissions (remote restore, rescue, one-click login) as
+     * the agent holds them. `offered` is a scope Guard Cloud has sent its key
+     * for, which the switch approves; nothing is trusted until then.
+     * `supported` is false on an agent too old to keep offers (before 1.0.17).
+     *
+     * @return array{supported:bool, enabled:list<string>, offered:list<string>}|null null when not installed or unreadable
+     */
+    public function scopes(): ?array
+    {
+        if (!$this->isInstalled()) {
+            return null;
+        }
+        try {
+            $manager = $this->pairingManager();
+        } catch (\Throwable $e) {
+            return null;
+        }
+        if (!method_exists($manager, 'scopeState')) {
+            return ['supported' => false, 'enabled' => array_values($manager->enabledScopes()), 'offered' => []];
+        }
+        $state = $manager->scopeState();
+
+        return ['supported' => true, 'enabled' => array_values($state['enabled']), 'offered' => array_values($state['offered'])];
+    }
+
+    /**
+     * Turn a scoped permission on (approving the key Guard Cloud offered) or
+     * off. This is the host-side consent the plan requires: it only runs
+     * behind the site's own super-admin login, never from a cloud command.
+     *
+     * @return array{supported:bool, enabled:list<string>, offered:list<string>}
+     * @throws BootstrapException
+     */
+    public function setScope(string $scope, bool $on): array
+    {
+        if (!in_array($scope, self::SCOPES, true)) {
+            throw new BootstrapException('Unknown permission.');
+        }
+        if (!$this->isInstalled()) {
+            throw new BootstrapException('The Guard Agent is not installed yet — set it up first.');
+        }
+        $manager = $this->pairingManager();
+        if ($on) {
+            if (!method_exists($manager, 'approveOffer')) {
+                throw new BootstrapException('This needs Guard Agent 1.0.17 or newer. Update the agent from Guard Cloud, then try again.');
+            }
+            if (!isset($manager->offeredScopes()[$scope])) {
+                throw new BootstrapException('Guard Cloud has not sent its key for this yet. It arrives within a minute or two of the agent checking in; reload this page shortly.');
+            }
+            $manager->approveOffer($scope);
+        } else {
+            $manager->disableScope($scope);
+        }
+
+        return $this->scopes() ?? ['supported' => true, 'enabled' => [], 'offered' => []];
+    }
+
+    /** The agent's own PairingManager over its state DB, built the way its entry points build it. */
+    private function pairingManager(): object
+    {
+        [$keyClass, , $stateClass, $pairClass] = $this->loadAgentClasses();
+        $config = @include $this->guardDir . '/data/config.php';
+        if (!is_array($config) || empty($config['db'])) {
+            throw new BootstrapException('The agent configuration is unreadable — re-run setup.');
+        }
+        $agentKey = (new $keyClass($this->guardDir . '/keys/agent.key.php'))->load();
+
+        return new $pairClass(new $stateClass($this->guardDir . '/data/' . $config['db']), $agentKey);
     }
 
     /**
