@@ -71,6 +71,25 @@ final class JobListTest extends TestCase
         $this->assertSame([JobList::FILE], array_map('basename', glob($this->dir . '/*') ?: []), 'no temp file left behind');
     }
 
+    public function testAJobWithoutAScheduleIsListedAsEveryMinute(): void
+    {
+        $jobs = JobList::fromScheduler(self::scheduler([self::job('queue-runner', '')], []));
+
+        $this->assertSame([['id' => 'queue-runner', 'at' => '* * * * *', 'enabled' => true]], $jobs);
+    }
+
+    public function testAnOlderListIsRewrittenInTheCurrentFormat(): void
+    {
+        $jobs = [['id' => 'cache-purge', 'at' => '0 4 * * *', 'enabled' => true]];
+        mkdir($this->dir, 0777, true);
+        file_put_contents($this->dir . '/' . JobList::FILE, json_encode(['written_at' => 1, 'jobs' => $jobs]));
+
+        $this->assertTrue(JobList::write($this->dir, $jobs), 'same jobs, but no format: rewritten');
+        $saved = json_decode((string) file_get_contents($this->dir . '/' . JobList::FILE), true);
+        $this->assertSame(JobList::FORMAT, $saved['format']);
+        $this->assertFalse(JobList::write($this->dir, $jobs));
+    }
+
     public function testASchedulerWithoutTheMethodGivesNothing(): void
     {
         $this->assertSame([], JobList::fromScheduler(new stdClass()));

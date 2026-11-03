@@ -1,3 +1,9 @@
+# v1.0.4
+## 11/03/2026
+
+1. [](#improved)
+    * The list of scheduler jobs kept for the Guard Agent now includes jobs registered without a schedule (Grav runs those every minute) and says it is complete, so the agent can skip starting Grav in the minutes when no job is due instead of booting it every minute. Needs Guard Agent 1.0.21
+
 # v1.0.3
 ## 11/01/2026
 

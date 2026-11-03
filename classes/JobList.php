@@ -21,6 +21,12 @@ final class JobList
     public const FILE = 'scheduler-jobs.json';
 
     /**
+     * 2: every job is listed, those without a schedule as "* * * * *". The
+     * agent relies on the list being complete only from this format on.
+     */
+    public const FORMAT = 2;
+
+    /**
      * @param object $scheduler Grav's Scheduler, as onSchedulerInitialized hands it over
      * @return list<array{id:string, at:string, enabled:bool}>
      */
@@ -39,8 +45,11 @@ final class JobList
                 continue;
             }
             $id = trim((string) $job->getId());
-            $at = trim((string) $job->getAt());
-            if ($id === '' || $at === '') {
+            // A job registered without a schedule runs every minute (Grav's
+            // Job::isDue() falls back to that), so it is listed that way: the
+            // agent skips starting Grav only when no listed job is due.
+            $at = trim((string) $job->getAt()) ?: '* * * * *';
+            if ($id === '') {
                 continue;
             }
             $jobs[$id] = [
@@ -64,13 +73,13 @@ final class JobList
     {
         $path = rtrim($dir, '/') . '/' . self::FILE;
         $current = is_file($path) ? json_decode((string) @file_get_contents($path), true) : null;
-        if (is_array($current) && ($current['jobs'] ?? null) === $jobs) {
+        if (is_array($current) && ($current['format'] ?? null) === self::FORMAT && ($current['jobs'] ?? null) === $jobs) {
             return false;
         }
         if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
             return false;
         }
-        $body = json_encode(['written_at' => time(), 'jobs' => $jobs], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        $body = json_encode(['format' => self::FORMAT, 'written_at' => time(), 'jobs' => $jobs], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         $tmp = $path . '.' . bin2hex(random_bytes(4)) . '.tmp';
         if ($body === false || @file_put_contents($tmp, $body . "\n") === false) {
             return false;
