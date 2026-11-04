@@ -1,3 +1,11 @@
+# v1.0.5
+## 11/04/2026
+
+1. [](#improved)
+    * The Admin Next dashboard loads faster: the security check now reads just the name and version from each plugin and theme instead of fully parsing every one, which matters most on sites with many plugins
+    * The dashboard no longer waits on Guard Cloud. The security banner uses the advisory list already saved on the site and fetches a newer one after the page has loaded, so an unreachable Guard Cloud can no longer hold up the dashboard for seconds at a time, and the banner stays up while Guard Cloud can't be reached
+    * The Guard page opens faster: the agent's state is read once per visit instead of several times
+
 # v1.0.4
 ## 11/03/2026
 

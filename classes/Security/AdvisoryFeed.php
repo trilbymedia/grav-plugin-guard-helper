@@ -21,6 +21,12 @@ final class AdvisoryFeed
     public const TTL = 3600;
     /** A failed fetch is asked again after this long. */
     public const FAILURE_TTL = 120;
+    /**
+     * The last feed that was fetched is also kept this long, for a screen that
+     * must not fetch (the dashboard banner): a stale list of advisories still
+     * names the vulnerable packages, where no list names none.
+     */
+    public const LAST_GOOD_TTL = 7 * 86400;
 
     /**
      * This runs on the Admin Next dashboard's notifications call, so a cloud
@@ -60,6 +66,9 @@ final class AdvisoryFeed
         if ($entry === null) {
             $advisories = $this->fetch();
             $this->cache->put($this->key(), $advisories !== null, $advisories, $advisories !== null ? self::TTL : self::FAILURE_TTL);
+            if ($advisories !== null) {
+                $this->cache->put($this->goodKey(), true, $advisories, self::LAST_GOOD_TTL);
+            }
             $entry = $this->cache->get($this->key()) ?? ['ok' => $advisories !== null, 'value' => $advisories, 'at' => time()];
         }
 
@@ -80,9 +89,37 @@ final class AdvisoryFeed
         return $entry === null ? null : self::result($entry);
     }
 
+    /**
+     * What to draw without fetching: the fresh answer when it is a real one,
+     * otherwise the last feed that was fetched (up to LAST_GOOD_TTL old), and
+     * otherwise whatever fresh failure is stored. A failure never hides an
+     * older good copy, so Guard Cloud being down does not clear the banner.
+     *
+     * @return array{ok:bool, advisories:array<int,array<string,mixed>>, checked_at:int}|null
+     *   null when nothing is stored
+     */
+    public function forDisplay(): ?array
+    {
+        $entry = $this->cache->get($this->key());
+        if ($entry !== null && $entry['ok']) {
+            return self::result($entry);
+        }
+        $good = $this->cache->get($this->goodKey());
+        if ($good !== null) {
+            return self::result($good);
+        }
+
+        return $entry === null ? null : self::result($entry);
+    }
+
     private function key(): string
     {
         return 'advisory-feed|' . $this->url;
+    }
+
+    private function goodKey(): string
+    {
+        return 'advisory-feed-last-good|' . $this->url;
     }
 
     /**

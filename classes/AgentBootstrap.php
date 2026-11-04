@@ -67,6 +67,14 @@ final class AgentBootstrap
     private $fetcher;
     /** Raw Ed25519 key releases must be signed with. */
     private string $releaseKey;
+    /**
+     * The agent's state DB handles opened so far, by path. A screen reads
+     * several keys and the permission switches in one request; opening the
+     * SQLite file for each one repeated its setup work six or seven times.
+     *
+     * @var array<string,object>
+     */
+    private array $stateStores = [];
 
     /**
      * @param string|null $releasePublicKey raw key; only tests pass one (they
@@ -421,7 +429,7 @@ final class AgentBootstrap
         }
 
         try {
-            $value = (new \GravGuard\Agent\State\StateStore($path))->get($key);
+            $value = $this->stateStore(\GravGuard\Agent\State\StateStore::class, $path)->get($key);
         } catch (\Throwable $e) {
             // A locked or unreadable state DB is not worth failing the page
             // over — the screen just shows "not seen yet".
@@ -429,6 +437,18 @@ final class AgentBootstrap
         }
 
         return $value === null ? null : (string) $value;
+    }
+
+    /**
+     * The agent's state DB at $path, opened on first use and kept for the
+     * rest of this object's life. A failed open is not kept, so the next call
+     * tries again.
+     *
+     * @throws \Throwable when the DB cannot be opened
+     */
+    private function stateStore(string $class, string $path): object
+    {
+        return $this->stateStores[$path] ??= new $class($path);
     }
 
     /**
@@ -827,7 +847,7 @@ final class AgentBootstrap
         }
         $agentKey = (new $keyClass($this->guardDir . '/keys/agent.key.php'))->load();
 
-        return new $pairClass(new $stateClass($this->guardDir . '/data/' . $config['db']), $agentKey);
+        return new $pairClass($this->stateStore($stateClass, $this->guardDir . '/data/' . $config['db']), $agentKey);
     }
 
     /**

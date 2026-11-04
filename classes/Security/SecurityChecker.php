@@ -6,6 +6,7 @@ namespace Grav\Plugin\GuardHelper\Security;
 
 use Grav\Common\Grav;
 use Grav\Common\Yaml;
+use Grav\Plugin\GuardHelper\BlueprintHeader;
 use Grav\Plugin\GuardHelper\LookupCache;
 
 /**
@@ -50,7 +51,7 @@ final class SecurityChecker
         $installed = $this->installedPackages();
         $php = self::php();
         $source = new AdvisoryFeed($feedUrl, $this->cache ?? LookupCache::forGrav($this->grav));
-        $feed = $askCloud ? $source->load($refresh) : $source->stored();
+        $feed = $askCloud ? $source->load($refresh) : $source->forDisplay();
         if ($feed === null) {
             return ['status' => 'pending', 'checked_at' => null, 'package_count' => count($installed), 'advisory_count' => null, 'findings' => [], 'php' => $php];
         }
@@ -146,11 +147,21 @@ final class SecurityChecker
                 if (!is_file($bp)) {
                     continue;
                 }
-                $data = Yaml::parse((string)file_get_contents($bp));
-                $version = is_array($data) ? ($data['version'] ?? null) : null;
-                if (is_string($version) && $version !== '') {
-                    $name = is_string($data['name'] ?? null) && $data['name'] !== '' ? $data['name'] : (string)$slug;
-                    $out[] = ['type' => $type, 'slug' => (string)$slug, 'version' => $version, 'name' => $name];
+                $src = (string)file_get_contents($bp);
+                // Only name and version are wanted, and reading them line by
+                // line costs a fraction of parsing every blueprint as YAML.
+                // A file the line reader cannot be sure of is parsed instead.
+                $header = BlueprintHeader::read($src);
+                if ($header === null) {
+                    $data = Yaml::parse($src);
+                    $header = [
+                        'name' => is_array($data) && is_string($data['name'] ?? null) ? $data['name'] : '',
+                        'version' => is_array($data) && is_string($data['version'] ?? null) ? $data['version'] : '',
+                    ];
+                }
+                if ($header['version'] !== '') {
+                    $name = $header['name'] !== '' ? $header['name'] : (string)$slug;
+                    $out[] = ['type' => $type, 'slug' => (string)$slug, 'version' => $header['version'], 'name' => $name];
                 }
             }
         }

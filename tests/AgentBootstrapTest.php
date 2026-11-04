@@ -378,6 +378,48 @@ final class AgentBootstrapTest extends TestCase
         $this->assertNull($this->agentState()->get('keyring.cloud.restore'));
     }
 
+    /**
+     * The status call reads delivery, pairing and the permission switches in
+     * one request. They share one open of the agent's state DB, and still see
+     * what the agent writes to it meanwhile.
+     */
+    public function testOneRequestOpensTheStateDbOnce(): void
+    {
+        $boot = $this->installedAgent();
+        $open = new \ReflectionProperty(AgentBootstrap::class, 'stateStores');
+        $open->setAccessible(true);
+        $this->assertSame([], $open->getValue($boot), 'nothing is opened before it is needed');
+
+        $boot->deliveryStatus();
+        $boot->isPaired();
+        $boot->connectionState();
+        $boot->scopes();
+        $handles = $open->getValue($boot);
+        $this->assertCount(1, $handles);
+
+        $this->agentState()->set('delivery.last_tick_at', (string) time());
+        $this->assertSame('tick', $boot->deliveryStatus()['channel'], 'a write by the agent is seen through the kept handle');
+        $boot->scopes();
+        $this->assertSame($handles, $open->getValue($boot), 'the same handle served every read');
+    }
+
+    public function testAStateDbThatCannotBeOpenedIsNotKept(): void
+    {
+        $boot = $this->installedAgent();
+        $config = include $this->gravRoot . '/_guard/data/config.php';
+        $path = $this->gravRoot . '/_guard/data/' . $config['db'];
+        $good = file_get_contents($path);
+        file_put_contents($path, 'not a database, and long enough to be read as one: ' . str_repeat('x', 200));
+        $this->assertNull($boot->isPaired(), 'an unreadable DB is unknown, not unpaired');
+
+        $open = new \ReflectionProperty(AgentBootstrap::class, 'stateStores');
+        $open->setAccessible(true);
+        $this->assertSame([], $open->getValue($boot), 'a failed open is not remembered');
+
+        file_put_contents($path, $good);
+        $this->assertFalse($boot->isPaired(), 'asked again once the file is readable');
+    }
+
     public function testTheSwitchRefusesAnUnknownScope(): void
     {
         $boot = $this->installedAgent();

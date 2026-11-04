@@ -66,9 +66,11 @@ class GuardHelperPlugin extends Plugin
     public static function getSubscribedEvents(): array
     {
         return [
-            // autoload first so our classes resolve in the API request path too
-            // (the API plugin instantiates GuardController via the route map).
-            'onPluginsInitialized'        => [['autoload', 100001], ['onPluginsInitialized', 0]],
+            // Our classes resolve everywhere without an event for it: Grav
+            // calls autoload() itself when it loads the plugin, before any
+            // event fires, which also covers the API request path (the API
+            // plugin instantiates GuardController via the route map).
+            'onPluginsInitialized'        => ['onPluginsInitialized', 0],
 
             // Admin classic.
             'onAdminMenu'                 => ['onAdminMenu', 0],
@@ -115,7 +117,10 @@ class GuardHelperPlugin extends Plugin
         }
     }
 
-    /** Zero-dep PSR-4 autoloader for our own classes (no composer at runtime). */
+    /**
+     * Zero-dep PSR-4 autoloader for our own classes (no composer at runtime).
+     * Grav core calls this once when it loads the plugin.
+     */
     public function autoload(): void
     {
         spl_autoload_register(static function (string $class): void {
@@ -455,9 +460,14 @@ class GuardHelperPlugin extends Plugin
         // Free GravSec check — independent of the agent; never breaks the dashboard.
         try {
             $feedUrl = rtrim($this->cloudUrl(), '/') . '/feed/advisories.json';
-            $result = (new \Grav\Plugin\GuardHelper\Security\SecurityChecker($this->grav))->run($feedUrl);
-            // An unknown result (the feed could not be fetched) raises no
-            // banner: there is nothing to report, and the Guard page says so.
+            // Only the stored copy of the feed, never Guard Cloud: this runs on
+            // every dashboard load, and a cloud that does not answer would hold
+            // each one up for seconds. A copy past its hour is fetched again
+            // once the response has gone (refreshFeedLater).
+            $result = (new \Grav\Plugin\GuardHelper\Security\SecurityChecker($this->grav))->run($feedUrl, false, false);
+            $this->refreshFeedLater($feedUrl);
+            // No stored copy (or a stored failure) raises no banner: there is
+            // nothing to report, and the Guard page says so.
             $count = $result['status'] === 'ok' ? count($result['findings']) : 0;
             if ($count > 0) {
                 $notifications['top'][] = [
@@ -479,6 +489,41 @@ class GuardHelperPlugin extends Plugin
         }
 
         $event['notifications'] = $notifications;
+    }
+
+    /**
+     * Fetch the advisory feed again after this response has been sent, when
+     * the stored copy is past its hour, so the dashboard banner stays current
+     * without anyone opening the Guard page and without the dashboard waiting
+     * on Guard Cloud. Only where PHP can finish the response first (PHP-FPM,
+     * LiteSpeed); elsewhere the Guard page refreshes it, as before.
+     */
+    private function refreshFeedLater(string $feedUrl): void
+    {
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+        $finish = null;
+        foreach (['fastcgi_finish_request', 'litespeed_finish_request'] as $fn) {
+            if (function_exists($fn) && !in_array($fn, $disabled, true)) {
+                $finish = $fn;
+                break;
+            }
+        }
+        if ($finish === null) {
+            return;
+        }
+        $feed = new \Grav\Plugin\GuardHelper\Security\AdvisoryFeed($feedUrl, \Grav\Plugin\GuardHelper\LookupCache::forGrav($this->grav));
+        // Fresh, or a failure from the last two minutes: nothing to do.
+        if ($feed->stored() !== null) {
+            return;
+        }
+        register_shutdown_function(static function () use ($feed, $finish): void {
+            try {
+                $finish();
+                $feed->load();
+            } catch (\Throwable $e) {
+                // The next dashboard load or the Guard page tries again.
+            }
+        });
     }
 
     // ── Scheduler webhook ──────────────────────────────────────────────────

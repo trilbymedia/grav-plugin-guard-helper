@@ -126,4 +126,30 @@ final class AdvisoryFeedTest extends TestCase
         $this->assertTrue($result['ok']);
         $this->assertSame(2, $this->calls);
     }
+    public function testTheBannerKeepsTheLastFeedWhileGuardCloudIsDown(): void
+    {
+        $url = 'https://cloud.example/feed/advisories.json';
+        $good = json_encode(['advisories' => [['type' => 'plugins', 'slug' => 'form', 'affected' => '<9.0.0']]]);
+        $this->feed($url, $good)->load();
+
+        // An hour and a bit later the cloud is down: the fresh answer is a failure.
+        $this->now += AdvisoryFeed::TTL + 60;
+        $down = $this->feed($url, null);
+        $this->assertFalse($down->load()['ok']);
+
+        $shown = $down->forDisplay();
+        $this->assertNotNull($shown);
+        $this->assertTrue($shown['ok'], 'a failure never hides the last good copy');
+        $this->assertSame('form', $shown['advisories'][0]['slug']);
+        $this->assertSame(2, $this->calls, 'the two loads fetched; forDisplay never does');
+    }
+
+    public function testTheLastGoodCopyRunsOutAfterAWeek(): void
+    {
+        $url = 'https://cloud.example/feed/advisories.json';
+        $this->feed($url, json_encode(['advisories' => []]))->load();
+        $this->now += AdvisoryFeed::LAST_GOOD_TTL + 1;
+
+        $this->assertNull($this->feed($url, null)->forDisplay(), 'nothing stored is nothing shown');
+    }
 }
