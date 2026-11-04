@@ -1,5 +1,5 @@
 # v1.0.5
-## 11/04/2026
+## 11/03/2026
 
 1. [](#improved)
     * The Admin Next dashboard loads faster: the security check now reads just the name and version from each plugin and theme instead of fully parsing every one, which matters most on sites with many plugins
