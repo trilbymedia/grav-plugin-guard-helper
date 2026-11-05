@@ -44,6 +44,32 @@ final class JobListTest extends TestCase
         };
     }
 
+    public function testAJobItsWhenConditionKeepsOffIsListedAsOff(): void
+    {
+        // Grav 2.2.25+: the job says so itself.
+        $asked = new class {
+            public function getId() { return 'yetisearch-pro-embed'; }
+            public function getAt() { return '*/15 * * * *'; }
+            public function getEnabled() { return true; }
+            public function passesWhen() { return false; }
+        };
+        // Older Grav: when()'s result sits in a private property.
+        $older = new class {
+            private $truthTest = false;
+            public function getId() { return 'yetisearch-pro-maintenance'; }
+            public function getAt() { return '30 9 * * *'; }
+            public function getEnabled() { return true; }
+        };
+
+        $jobs = JobList::fromScheduler(self::scheduler([], [$asked, $older, self::job('cache-purge', '0 4 * * *')]));
+
+        $this->assertSame([
+            ['id' => 'cache-purge', 'at' => '0 4 * * *', 'enabled' => true],
+            ['id' => 'yetisearch-pro-embed', 'at' => '*/15 * * * *', 'enabled' => false],
+            ['id' => 'yetisearch-pro-maintenance', 'at' => '30 9 * * *', 'enabled' => false],
+        ], $jobs);
+    }
+
     public function testListsEveryRegisteredJobWithItsScheduleSortedById(): void
     {
         $jobs = JobList::fromScheduler(self::scheduler(

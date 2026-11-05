@@ -55,12 +55,42 @@ final class JobList
             $jobs[$id] = [
                 'id' => $id,
                 'at' => $at,
-                'enabled' => method_exists($job, 'getEnabled') ? (bool) $job->getEnabled() : true,
+                'enabled' => self::isOn($job),
             ];
         }
         ksort($jobs);
 
         return array_values($jobs);
+    }
+
+    /**
+     * Whether a job will run when it comes due: switched on in Grav's
+     * scheduler settings, and its when() condition (a plugin's own setting,
+     * such as YetiSearch Pro's embed job while semantic search is off)
+     * passes. Grav 2.2.25 asks the job; older Grav keeps when()'s result in a
+     * private property, read here so the agent and the cloud don't watch a job
+     * that is switched off.
+     */
+    private static function isOn(object $job): bool
+    {
+        if (method_exists($job, 'getEnabled') && !$job->getEnabled()) {
+            return false;
+        }
+        if (method_exists($job, 'passesWhen')) {
+            return (bool) $job->passesWhen();
+        }
+        if (property_exists($job, 'truthTest')) {
+            try {
+                $property = new \ReflectionProperty($job, 'truthTest');
+                $property->setAccessible(true);
+
+                return $property->getValue($job) === true;
+            } catch (\ReflectionException $e) {
+                return true;
+            }
+        }
+
+        return true;
     }
 
     /**
