@@ -1,8 +1,10 @@
 # v1.0.7
-## 11/04/2026
+## 11/05/2026
 
 1. [](#improved)
     * Runs on PHP 7.3, the same floor as Grav 1.7, so sites still on 7.3 can install it and set up the agent. PHP 7.3 gets no security fixes, so the plugin still warns about it and recommends PHP 8.3
+1. [](#bugfix)
+    * A scheduler job that its plugin switches off (such as YetiSearch Pro's embed job while semantic search is off) is listed to Guard as off, so Guard no longer watches it and alerts that it failed. Grav 2.2.24 and older record each skipped run of such a job as a failure
 
 # v1.0.6
 ## 11/04/2026
