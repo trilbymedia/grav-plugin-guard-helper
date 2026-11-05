@@ -1,3 +1,10 @@
+# v1.0.6
+## 11/05/2026
+
+1. [](#improved)
+    * With a pairing code already on screen, the button under it reads **New pairing code** and steps back to a secondary button, since pressing it replaces the code rather than showing it
+    * The Copy buttons beside the agent endpoint and the pairing code are now as tall as the boxes they sit beside
+
 # v1.0.5
 ## 11/03/2026
 

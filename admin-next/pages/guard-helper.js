@@ -409,8 +409,11 @@ class GuardHelperPage extends HTMLElement {
 	 */
 	_pairing(s) {
 		const paired = ['waiting', 'connected'].includes(s.data?.connection);
-		const label = s.busy ? 'Working…' : (paired ? 'Show a new pairing code' : 'Show pairing code');
-		const btn = `<button id="repair-btn" class="btn${paired ? ' ghost' : ''}" ${s.busy ? 'disabled' : ''}>${label}</button>`;
+		// With a code already on screen the button replaces it, so it says so
+		// and steps back: copying the code is the next thing to do.
+		const shown = !!s.result;
+		const label = s.busy ? 'Working…' : (shown ? 'New pairing code' : (paired ? 'Show a new pairing code' : 'Show pairing code'));
+		const btn = `<button id="repair-btn" class="btn${paired || shown ? ' ghost' : ''}" ${s.busy ? 'disabled' : ''}>${label}</button>`;
 		const note = paired && !s.result
 			? `<p class="hint">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>`
 			: '';
@@ -421,7 +424,7 @@ class GuardHelperPage extends HTMLElement {
 		return `<div class="pair-block">
 			${btn}
 			<div class="pair-out">
-				<p class="muted">Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. Single-use; generate another if it expires.</p>
+				<p class="muted">Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. Single-use; use <strong>New pairing code</strong> if it expires.</p>
 				${this._codeRow('Pairing code', s.result.code)}
 			</div>
 		</div>`;
@@ -598,7 +601,7 @@ class GuardHelperPage extends HTMLElement {
 		.lbl { font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em;
 			color:var(--muted-foreground,#71717a); }
 		.coderow { display:flex; gap:8px; align-items:stretch; }
-		.coderow .btn { min-width:92px; }
+		.coderow .btn { min-width:92px; align-self:stretch; }
 		.btn.ghost.copied { color:var(--gh-ok-fg,#15803d); border-color:var(--gh-ok,#16a34a); }
 		.code { flex:1; font-family:ui-monospace,Menlo,monospace; word-break:break-all;
 			background:var(--muted,#f4f4f5); border:1px solid var(--border,#e4e4e7);

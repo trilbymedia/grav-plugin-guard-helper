@@ -1256,7 +1256,7 @@ class GuardHelperPlugin extends Plugin
             $pairOut = $result === null ? '' : '
                 <div class="pair-out">
                     <p>Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within '
-                        . (int) ($result['ttl'] / 60) . ' minutes. Single-use; generate another if it expires.</p>
+                        . (int) ($result['ttl'] / 60) . ' minutes. Single-use; use <strong>New pairing code</strong> if it expires.</p>
                     <label>Pairing code</label>
                     ' . $this->codeRow($result['code']) . '
                 </div>';
@@ -1276,7 +1276,7 @@ class GuardHelperPlugin extends Plugin
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
                     <input type="hidden" name="guard-action" value="repair">
-                    <button type="submit"' . ($paired ? ' class="secondary"' : '') . '>' . ($paired ? 'Show a new pairing code' : 'Show pairing code') . '</button>
+                    <button type="submit"' . ($paired || $result !== null ? ' class="secondary"' : '') . '>' . ($result !== null ? 'New pairing code' : ($paired ? 'Show a new pairing code' : 'Show pairing code')) . '</button>
                 </form>'
                 . ($paired && $result === null ? '<p class="muted">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>' : '')
                 . $pairOut
