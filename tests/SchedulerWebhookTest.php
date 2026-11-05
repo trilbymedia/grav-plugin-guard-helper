@@ -572,7 +572,7 @@ final class SchedulerWebhookTest extends TestCase
         $procs = [];
         for ($i = 0; $i < 4; $i++) {
             $proc = proc_open(
-                [PHP_BINARY, $worker, $this->root, $lock],
+                self::command([PHP_BINARY, $worker, $this->root, $lock]),
                 [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
                 $pipes
             );
@@ -902,11 +902,23 @@ final class SchedulerWebhookTest extends TestCase
         return realpath($dir . '/src/autoload.php');
     }
 
+    /**
+     * An argv list as proc_open() takes it on this PHP: 7.4 and up take the
+     * list, 7.3 only a command string.
+     *
+     * @param string[] $argv
+     * @return string[]|string
+     */
+    private static function command(array $argv)
+    {
+        return PHP_VERSION_ID >= 70400 ? $argv : implode(' ', array_map('escapeshellarg', $argv));
+    }
+
     /** @return array<string,mixed> */
     private function worker(array $args): array
     {
         $cmd = array_merge([PHP_BINARY, __DIR__ . '/fixtures/agent-reader-worker.php'], $args);
-        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $proc = proc_open(self::command($cmd), [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
         $this->assertIsResource($proc);
         $out = (string) stream_get_contents($pipes[1]);
         $err = (string) stream_get_contents($pipes[2]);

@@ -22,7 +22,8 @@ namespace Grav\Plugin\GuardHelper;
  */
 final class LookupCache
 {
-    private string $dir;
+    /** @var string */
+    private $dir;
     /** @var callable():int */
     private $clock;
 

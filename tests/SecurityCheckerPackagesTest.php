@@ -18,7 +18,8 @@ use PHPUnit\Framework\TestCase;
  */
 final class SecurityCheckerPackagesTest extends TestCase
 {
-    private string $dir;
+    /** @var string */
+    private $dir;
 
     protected function setUp(): void
     {
@@ -59,7 +60,8 @@ final class SecurityCheckerPackagesTest extends TestCase
         $dir = $this->dir;
         $grav = new Grav();
         $grav['locator'] = new class($dir) {
-            private string $dir;
+            /** @var string */
+            private $dir;
 
             public function __construct(string $dir)
             {

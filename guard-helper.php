@@ -879,7 +879,7 @@ class GuardHelperPlugin extends Plugin
             return '';
         }
 
-        $e = static fn($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        $e = static function ($s): string { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
         $line = (string) ($cron['line'] ?? '');
         // Appends rather than opening an editor — `crontab -e` drops most
         // people into vi, which is where they get stuck.
@@ -990,7 +990,7 @@ class GuardHelperPlugin extends Plugin
      */
     private function versionLine(AgentBootstrap $boot, string $cloud): string
     {
-        $e = static fn($v): string => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+        $e = static function ($v): string { return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8'); };
         $parts = [];
 
         $plugin = $this->pluginVersion();
@@ -1206,7 +1206,7 @@ class GuardHelperPlugin extends Plugin
         if ($scopes === null) {
             return '';
         }
-        $e = static fn($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        $e = static function ($s): string { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
         $rows = '';
         foreach (self::SCOPE_LABELS as $scope => [$label, $help]) {
             $on = in_array($scope, $scopes['enabled'], true);
@@ -1245,7 +1245,7 @@ class GuardHelperPlugin extends Plugin
      */
     private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error, ?array $webhook = null): string
     {
-        $e = static fn($s): string => htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
+        $e = static function ($s): string { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
         $endpoint = $this->absoluteUrl($result['endpoint_path'] ?? $boot->endpointPath());
         $signupUrl = $this->signupUrl();
 

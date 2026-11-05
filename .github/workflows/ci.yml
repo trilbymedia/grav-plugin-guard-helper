@@ -16,9 +16,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 7.4 is the plugin's floor (Grav 1.7 sites still on it); 8.3 is the
-        # PHP Guard recommends, and 8.4 the newest Grav 2 runs on.
-        php: ['7.4', '8.3', '8.4']
+        # 7.3 is the plugin's floor (Grav 1.7's own, and some sites are still on
+        # it); 8.3 is the PHP Guard recommends, and 8.4 the newest Grav 2 runs on.
+        php: ['7.3', '7.4', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
@@ -37,9 +37,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 7.4 is the plugin's floor (Grav 1.7 sites still on it); 8.3 is the
-        # PHP Guard recommends, and 8.4 the newest Grav 2 runs on.
-        php: ['7.4', '8.3', '8.4']
+        # 7.3 is the plugin's floor (Grav 1.7's own, and some sites are still on
+        # it); 8.3 is the PHP Guard recommends, and 8.4 the newest Grav 2 runs on.
+        php: ['7.3', '7.4', '8.3', '8.4']
     steps:
       - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2

@@ -1,3 +1,9 @@
+# v1.0.7
+## 11/04/2026
+
+1. [](#improved)
+    * Runs on PHP 7.3, the same floor as Grav 1.7, so sites still on 7.3 can install it and set up the agent. PHP 7.3 gets no security fixes, so the plugin still warns about it and recommends PHP 8.3
+
 # v1.0.6
 ## 11/04/2026
 

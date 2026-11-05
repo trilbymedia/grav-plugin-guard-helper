@@ -35,8 +35,10 @@ final class AdvisoryFeed
     private const CONNECT_TIMEOUT = 2;
     private const TIMEOUT = 4;
 
-    private string $url;
-    private LookupCache $cache;
+    /** @var string */
+    private $url;
+    /** @var LookupCache */
+    private $cache;
     /** @var callable(string, int, int):?string */
     private $fetcher;
 

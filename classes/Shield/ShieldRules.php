@@ -19,7 +19,8 @@ final class ShieldRules
     private const CACHE_KEY = 'guard-shield-rules';
     private const CACHE_TTL = 600;
 
-    private Grav $grav;
+    /** @var Grav */
+    private $grav;
 
     public function __construct(Grav $grav)
     {

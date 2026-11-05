@@ -21,8 +21,10 @@ use Grav\Plugin\GuardHelper\LookupCache;
  */
 final class SecurityChecker
 {
-    private Grav $grav;
-    private ?LookupCache $cache;
+    /** @var Grav */
+    private $grav;
+    /** @var LookupCache|null */
+    private $cache;
 
     public function __construct(Grav $grav, ?LookupCache $cache = null)
     {

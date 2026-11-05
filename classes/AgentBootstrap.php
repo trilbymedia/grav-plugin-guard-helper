@@ -56,8 +56,10 @@ final class AgentBootstrap
     private const DOWNLOAD_TIMEOUT = 60;
     private const CONNECT_TIMEOUT = 5;
 
-    private string $gravRoot;
-    private string $guardDir;
+    /** @var string */
+    private $gravRoot;
+    /** @var string */
+    private $guardDir;
     /**
      * GET a URL → body, or null on failure. Called with the URL, the total
      * timeout and the connect timeout, in seconds.
@@ -65,8 +67,8 @@ final class AgentBootstrap
      * @var callable(string, int, int):?string
      */
     private $fetcher;
-    /** Raw Ed25519 key releases must be signed with. */
-    private string $releaseKey;
+    /** @var string raw Ed25519 key releases must be signed with */
+    private $releaseKey;
     /**
      * The agent's state DB handles opened so far, by path. A screen reads
      * several keys and the permission switches in one request; opening the
@@ -74,7 +76,7 @@ final class AgentBootstrap
      *
      * @var array<string,object>
      */
-    private array $stateStores = [];
+    private $stateStores = [];
 
     /**
      * @param string|null $releasePublicKey raw key; only tests pass one (they
@@ -448,7 +450,11 @@ final class AgentBootstrap
      */
     private function stateStore(string $class, string $path): object
     {
-        return $this->stateStores[$path] ??= new $class($path);
+        if (!isset($this->stateStores[$path])) {
+            $this->stateStores[$path] = new $class($path);
+        }
+
+        return $this->stateStores[$path];
     }
 
     /**

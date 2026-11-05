@@ -67,7 +67,7 @@ Agent and keep working if this plugin (or Grav itself) is broken or absent.
 ## Requirements
 
 - Grav 1.7.51+ or Grav 2
-- PHP 7.4+ with ext-sodium and ext-zip (for the agent bootstrap). PHP 7.4 to 8.1 get no security fixes any more, so the plugin warns about them and recommends PHP 8.3
+- PHP 7.3+ with ext-sodium and ext-zip (for the agent bootstrap). PHP 7.3 to 8.1 get no security fixes any more, so the plugin warns about them and recommends PHP 8.3
 
 ## Development
 

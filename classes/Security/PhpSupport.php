@@ -9,7 +9,7 @@ namespace Grav\Plugin\GuardHelper\Security;
  *
  * A PHP branch past its end of life gets no fixes at all, however serious:
  * the critical fixes PHP shipped in 2026 went to 8.2 and up only. The plugin
- * installs on PHP 7.4 and up so that those sites can still be watched, and
+ * installs on PHP 7.3 and up (Grav 1.7's own floor) so that those sites can still be watched, and
  * this check tells them plainly what that PHP leaves open and what to move to:
  * PHP 8.3 on Grav 1.7 (the newest it runs on), 8.3 or newer on Grav 2.
  *

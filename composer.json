@@ -4,7 +4,7 @@
     "description": "Optional companion plugin for Grav Guard — agent setup from the browser, free vulnerability check, scheduler webhook",
     "license": "MIT",
     "require": {
-        "php": ">=7.4"
+        "php": ">=7.3"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.6"

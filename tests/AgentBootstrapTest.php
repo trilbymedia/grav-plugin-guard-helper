@@ -218,14 +218,14 @@ final class AgentBootstrapTest extends TestCase
 
     public function testMalformedManifestIsRejected(): void
     {
-        $fetcher = static fn(string $url): ?string => 'not json';
+        $fetcher = static function (string $url): ?string { return 'not json'; };
         $this->expectException(BootstrapException::class);
         $this->boot($fetcher)->install('https://cloud.test');
     }
 
     public function testUnreachableCloudIsRejected(): void
     {
-        $fetcher = static fn(string $url): ?string => null;
+        $fetcher = static function (string $url): ?string { return null; };
         $this->expectException(BootstrapException::class);
         $this->boot($fetcher)->install('https://cloud.test');
     }
@@ -463,7 +463,7 @@ final class AgentBootstrapTest extends TestCase
         [$descriptor, $zip] = $this->release($this->agentFiles($agentSrc));
         $boot = $this->boot($this->serving($descriptor, $zip));
         $boot->install('https://cloud.test', 'http://example.com/blog');
-        $config = fn (): array => include $this->gravRoot . '/_guard/data/config.php';
+        $config = function (): array { return include $this->gravRoot . '/_guard/data/config.php'; };
         $this->assertSame('http://example.com/blog', $config()['site_url']);
 
         $boot->repair('https://evil.example/blog');
@@ -610,13 +610,13 @@ final class AgentBootstrapTest extends TestCase
      */
     public function testUnknownLatestIsNotTreatedAsUpToDate(): void
     {
-        $this->assertNull($this->boot(static fn(string $u): ?string => null)->latestAgentVersion('https://cloud.test'));
-        $this->assertNull($this->boot(static fn(string $u): ?string => 'not json')->latestAgentVersion('https://cloud.test'));
-        $this->assertNull($this->boot(static fn(string $u): ?string => '{"version":"9.9.9"}')->latestAgentVersion('https://cloud.test'));
+        $this->assertNull($this->boot(static function (string $u): ?string { return null; })->latestAgentVersion('https://cloud.test'));
+        $this->assertNull($this->boot(static function (string $u): ?string { return 'not json'; })->latestAgentVersion('https://cloud.test'));
+        $this->assertNull($this->boot(static function (string $u): ?string { return '{"version":"9.9.9"}'; })->latestAgentVersion('https://cloud.test'));
 
         // a version nobody signed is not "latest" either
         [$descriptor] = $this->release(['agent.php' => '<?php']);
-        $unsigned = new AgentBootstrap($this->gravRoot, static fn(string $u): ?string => $descriptor);
+        $unsigned = new AgentBootstrap($this->gravRoot, static function (string $u) use ($descriptor): ?string { return $descriptor; });
         $this->assertNull($unsigned->latestAgentVersion('https://cloud.test'));
     }
 
@@ -653,7 +653,7 @@ final class AgentBootstrapTest extends TestCase
 
             return $descriptor;
         });
-        $now = 1_800_000_000;
+        $now = 1800000000;
         $cache = new \Grav\Plugin\GuardHelper\LookupCache($this->gravRoot . '/cache', static function () use (&$now): int {
             return $now;
         });
@@ -688,7 +688,7 @@ final class AgentBootstrapTest extends TestCase
 
             return null;
         });
-        $now = 1_800_000_000;
+        $now = 1800000000;
         $cache = new \Grav\Plugin\GuardHelper\LookupCache($this->gravRoot . '/cache', static function () use (&$now): int {
             return $now;
         });

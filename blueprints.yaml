@@ -2,7 +2,7 @@ name: Guard Helper
 slug: guard-helper
 type: plugin
 testing: false
-version: 1.0.6
+version: 1.0.7
 description: Optional companion plugin for Grav Guard — browser-based agent setup, a free vulnerability check, and the scheduler webhook for hosts without cron. The Guard control channel never depends on this plugin.
 icon: shield
 author:
@@ -28,7 +28,7 @@ compatibility:
 
 dependencies:
   - { name: grav, version: ">=1.7.51" }
-  - { name: php, version: ">=7.4" }
+  - { name: php, version: ">=7.3" }
 
 form:
   validation: loose

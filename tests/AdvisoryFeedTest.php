@@ -20,7 +20,7 @@ final class AdvisoryFeedTest extends TestCase
     private $dir;
 
     /** @var int */
-    private $now = 1_800_000_000;
+    private $now = 1800000000;
 
     /** @var int */
     private $calls = 0;

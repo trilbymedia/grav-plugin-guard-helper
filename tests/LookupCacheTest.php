@@ -18,7 +18,7 @@ final class LookupCacheTest extends TestCase
     private $dir;
 
     /** @var int */
-    private $now = 1_800_000_000;
+    private $now = 1800000000;
 
     protected function setUp(): void
     {
@@ -51,7 +51,7 @@ final class LookupCacheTest extends TestCase
         $cache->put('k', true, ['a' => 1], 60);
 
         $this->now += 59;
-        $this->assertSame(['ok' => true, 'value' => ['a' => 1], 'at' => 1_800_000_000], $cache->get('k'));
+        $this->assertSame(['ok' => true, 'value' => ['a' => 1], 'at' => 1800000000], $cache->get('k'));
 
         $this->now += 1;
         $this->assertNull($cache->get('k'), 'expired at exactly its TTL');
