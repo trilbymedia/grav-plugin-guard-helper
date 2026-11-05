@@ -1,5 +1,5 @@
 # v1.0.6
-## 11/05/2026
+## 11/04/2026
 
 1. [](#improved)
     * With a pairing code already on screen, the button under it reads **New pairing code** and steps back to a secondary button, since pressing it replaces the code rather than showing it
