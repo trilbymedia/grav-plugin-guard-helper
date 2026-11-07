@@ -1,5 +1,5 @@
 # v1.0.7
-## 11/05/2026
+## 11/07/2026
 
 1. [](#new)
     * **Fix agent settings** on the Guard page points the Guard Agent at this site's Grav folder and the address you're using, so an agent that lost track of Grav after the site moved folders, or still calls an old domain, can be put right without SSH. The page says when either setting doesn't match the site
