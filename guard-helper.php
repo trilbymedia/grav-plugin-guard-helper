@@ -1227,7 +1227,10 @@ class GuardHelperPlugin extends Plugin
             } elseif (!$scopes['supported']) {
                 $state = '<span class="pill">Needs agent 1.0.17</span>';
             } elseif (!$offered) {
-                $state = '<span class="pill">Waiting for Guard Cloud</span>';
+                // Guard Cloud offers the rescue key on Premium only.
+                $state = $scope === 'rescue'
+                    ? '<span class="pill">Waiting for Guard Cloud (Premium)</span>'
+                    : '<span class="pill">Waiting for Guard Cloud</span>';
             } else {
                 $state = '<span class="pill">Off</span>';
             }

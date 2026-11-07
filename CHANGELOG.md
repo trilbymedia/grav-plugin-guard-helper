@@ -5,6 +5,7 @@
     * **Fix agent settings** on the Guard page points the Guard Agent at this site's Grav folder and the address you're using, so an agent that lost track of Grav after the site moved folders, or still calls an old domain, can be put right without SSH. The page says when either setting doesn't match the site
 1. [](#improved)
     * Runs on PHP 7.3, the same floor as Grav 1.7, so sites still on 7.3 can install it and set up the agent. PHP 7.3 gets no security fixes, so the plugin still warns about it and recommends PHP 8.3
+    * **Allow rescue** says it waits for Guard Cloud on Premium, since Guard Cloud only offers the rescue key to sites on Premium
     * Pairing instructions name the real place in Guard Cloud: **Sites → Add site** for a new site, or **Pair again** on the site's row for one that's already there
 1. [](#bugfix)
     * **Allow remote restore** and **Allow rescue** show as off, and can be switched on again, when they were approved for an earlier pairing and Guard Cloud now offers a new key, such as after the site was removed from Guard Cloud and added again

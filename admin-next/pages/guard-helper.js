@@ -407,7 +407,9 @@ class GuardHelperPage extends HTMLElement {
 			const on = sc.enabled.includes(scope);
 			const ready = on || (sc.supported && sc.offered.includes(scope));
 			const note = on || ready ? '' : (sc.supported
-				? '<span class="pill muted">Waiting for Guard Cloud</span>'
+				? (scope === 'rescue'
+					? '<span class="pill muted">Waiting for Guard Cloud (Premium)</span>'
+					: '<span class="pill muted">Waiting for Guard Cloud</span>')
 				: '<span class="pill muted">Needs agent 1.0.17</span>');
 			return `<label class="perm${ready ? '' : ' dim'}">
 				<span class="perm-text"><strong>${esc(label)}</strong> ${note}<span class="sub">${esc(help)}</span></span>
