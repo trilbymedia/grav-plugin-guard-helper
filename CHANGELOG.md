@@ -1,9 +1,13 @@
 # v1.0.7
 ## 11/05/2026
 
+1. [](#new)
+    * **Fix agent settings** on the Guard page points the Guard Agent at this site's Grav folder and the address you're using, so an agent that lost track of Grav after the site moved folders, or still calls an old domain, can be put right without SSH. The page says when either setting doesn't match the site
 1. [](#improved)
     * Runs on PHP 7.3, the same floor as Grav 1.7, so sites still on 7.3 can install it and set up the agent. PHP 7.3 gets no security fixes, so the plugin still warns about it and recommends PHP 8.3
+    * Pairing instructions name the real place in Guard Cloud: **Sites → Add site** for a new site, or **Pair again** on the site's row for one that's already there
 1. [](#bugfix)
+    * **Allow remote restore** and **Allow rescue** show as off, and can be switched on again, when they were approved for an earlier pairing and Guard Cloud now offers a new key, such as after the site was removed from Guard Cloud and added again
     * A scheduler job that its plugin switches off (such as YetiSearch Pro's embed job while semantic search is off) is listed to Guard as off, so Guard no longer watches it and alerts that it failed. Grav 2.2.24 and older record each skipped run of such a job as a failure
 
 # v1.0.6

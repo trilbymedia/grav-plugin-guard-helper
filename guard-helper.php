@@ -358,6 +358,7 @@ class GuardHelperPlugin extends Plugin
         $routes->post('/' . self::SLUG . '/repair', [$controller, 'repair']);
         $routes->post('/' . self::SLUG . '/webhook', [$controller, 'webhookEnable']);
         $routes->post('/' . self::SLUG . '/scopes', [$controller, 'scopes']);
+        $routes->post('/' . self::SLUG . '/fix-settings', [$controller, 'fixSettings']);
         $routes->get('/' . self::SLUG . '/security', [$controller, 'security']);
     }
 
@@ -676,6 +677,7 @@ class GuardHelperPlugin extends Plugin
         $result = null;
         $error = null;
         $webhook = null;
+        $settingsFixed = false;
         if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $action = (string) ($_POST['guard-action'] ?? '');
             if (!Utils::verifyNonce($_POST['guard-nonce'] ?? '', self::NONCE_ACTION)) {
@@ -683,6 +685,15 @@ class GuardHelperPlugin extends Plugin
             } elseif ($action === 'webhook') {
                 // Switch the scheduler webhook on without a pairing code.
                 $webhook = $boot->isInstalled() ? $this->ensureWebhook() : null;
+            } elseif ($action === 'fix-settings') {
+                // Point the agent at this Grav folder and the address in use:
+                // host-side, behind the super-admin check and the nonce.
+                try {
+                    $boot->fixSettings($this->absoluteUrl(''));
+                    $settingsFixed = true;
+                } catch (BootstrapException $e) {
+                    $error = $e->getMessage();
+                }
             } elseif ($action === 'scope') {
                 // One of the permission switches: host-side consent, so only
                 // ever here, behind the super-admin check above.
@@ -710,7 +721,7 @@ class GuardHelperPlugin extends Plugin
             }
         }
 
-        $this->renderAndExit($this->page($boot, $cloud, $result, $error, $webhook));
+        $this->renderAndExit($this->page($boot, $cloud, $result, $error, $webhook, $settingsFixed));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -844,7 +855,7 @@ class GuardHelperPlugin extends Plugin
         $state = $boot->connectionState();
         if ($justInstalled && $state === 'unpaired') {
             return ['off', 'Guard Agent installed, pairing started',
-                'Enter the pairing code below in Guard Cloud &rarr; Fleet &rarr; Add Site to add this site to your fleet.'];
+                'Enter the pairing code below in Guard Cloud: Sites &rarr; Add site.'];
         }
         if ($state === 'connected') {
             $d = (array) $boot->deliveryStatus();
@@ -862,7 +873,7 @@ class GuardHelperPlugin extends Plugin
         }
 
         return ['off', 'Installed, not paired yet',
-            'To add this site to your fleet, generate a pairing code and enter it in Guard Cloud &rarr; Fleet &rarr; Add Site. Codes are single-use and expire after 15 minutes.'];
+            'To add this site to Guard Cloud, show a pairing code and enter it in Guard Cloud: Sites &rarr; Add site, or Pair again on the site&rsquo;s row if it is already there. Codes are single-use and expire after 15 minutes.'];
     }
 
     /**
@@ -1239,11 +1250,53 @@ class GuardHelperPlugin extends Plugin
             . $err . '<ul class="perm-list">' . $rows . '</ul></div>';
     }
 
+    /**
+     * The Grav folder and address the agent uses. After the site moves to
+     * another folder the agent no longer knows where Grav is; after a domain
+     * change it calls the old address. Either shows here with the fix.
+     */
+    private function settingsSection(AgentBootstrap $boot, ?string $error, bool $fixed): string
+    {
+        $st = $boot->agentSettings($this->absoluteUrl(''));
+        if ($st === null) {
+            return '';
+        }
+        $e = static function ($s): string { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
+        $mine = ($_POST['guard-action'] ?? '') === 'fix-settings';
+        $err = ($error !== null && $mine) ? '<div class="err">' . $e($error) . '</div>' : '';
+        $rows = '<p class="muted">Grav folder: <code>' . $e($st['grav_root'] ?? 'not set') . '</code>'
+            . ($st['root_ok'] ? '' : ' (this site: <code>' . $e($st['expected_root']) . '</code>)')
+            . '<br>Site address: <code>' . $e($st['site_url'] ?? 'not set') . '</code>'
+            . ($st['url_ok'] || $st['expected_url'] === null ? '' : ' (in use now: <code>' . $e($st['expected_url']) . '</code>)')
+            . '</p>';
+        $button = static function (bool $primary) use ($e): string {
+            return '<form method="post">
+                    <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
+                    <input type="hidden" name="guard-action" value="fix-settings">
+                    <button type="submit"' . ($primary ? '' : ' class="secondary"') . '>Fix agent settings</button>
+                </form>';
+        };
+
+        if (!$st['root_ok'] || !$st['url_ok']) {
+            $what = !$st['root_ok']
+                ? 'The Guard Agent doesn&rsquo;t know where Grav is on this server, usually because the site moved to another folder. Updates, backups and scans fail until it does.'
+                : 'The Guard Agent still uses an old address for this site, so it calls the wrong place for the health check after an update and for Grav&rsquo;s scheduled jobs.';
+
+            return '<div class="state amber"><strong>The agent&rsquo;s settings don&rsquo;t match this site</strong>
+                <p class="muted">' . $what . ' Fix agent settings sets them to this site&rsquo;s folder and the address you&rsquo;re using now. The pairing and the agent&rsquo;s key stay as they are.</p>'
+                . $rows . $err . $button(true) . '</div>';
+        }
+
+        return '<details class="adv"' . ($fixed || $err !== '' ? ' open' : '') . '><summary>Agent settings</summary><div class="adv-body">'
+            . ($fixed ? '<p class="muted">Saved. The agent uses these from its next request.</p>' : '')
+            . $rows . $err . $button(false) . '</div></details>';
+    }
+
     /** Build the self-contained HTML page. */
     /**
      * @param array<string,mixed>|null $webhook ensure()'s result, when this request ran it
      */
-    private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error, ?array $webhook = null): string
+    private function page(AgentBootstrap $boot, string $cloud, ?array $result, ?string $error, ?array $webhook = null, bool $settingsFixed = false): string
     {
         $e = static function ($s): string { return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8'); };
         $endpoint = $this->absoluteUrl($result['endpoint_path'] ?? $boot->endpointPath());
@@ -1255,8 +1308,8 @@ class GuardHelperPlugin extends Plugin
             // further up the page, where it reads as unrelated.
             $pairOut = $result === null ? '' : '
                 <div class="pair-out">
-                    <p>Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within '
-                        . (int) ($result['ttl'] / 60) . ' minutes. Single-use; use <strong>New pairing code</strong> if it expires.</p>
+                    <p>Enter this in Guard Cloud within '
+                        . (int) ($result['ttl'] / 60) . ' minutes: <strong>Sites → Add site</strong> for a new site, or <strong>Pair again</strong> on the site&rsquo;s row if it is already there. Single-use; use <strong>New pairing code</strong> if it expires.</p>
                     <label>Pairing code</label>
                     ' . $this->codeRow($result['code']) . '
                 </div>';
@@ -1271,6 +1324,7 @@ class GuardHelperPlugin extends Plugin
                 <p class="muted">' . $help . '</p>
                 <label>Agent endpoint</label>
                 ' . $this->codeRow($endpoint)
+                . $this->settingsSection($boot, $error, $settingsFixed)
                 . $this->cronDetails($boot)
                 . $this->webhookNotice($webhook) . '
                 <form method="post">
@@ -1278,7 +1332,7 @@ class GuardHelperPlugin extends Plugin
                     <input type="hidden" name="guard-action" value="repair">
                     <button type="submit"' . ($paired || $result !== null ? ' class="secondary"' : '') . '>' . ($result !== null ? 'New pairing code' : ($paired ? 'Show a new pairing code' : 'Show pairing code')) . '</button>
                 </form>'
-                . ($paired && $result === null ? '<p class="muted">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>' : '')
+                . ($paired && $result === null ? '<p class="muted">Only needed to pair this site again; the current pairing keeps working until Guard Cloud takes the new code. Pairing again turns the permissions below off until you switch them on again.</p>' : '')
                 . $pairOut
                 . ($paired ? $this->scopesSection($boot, $error) : '')
                 . $this->manageLink($cloud);

@@ -80,4 +80,29 @@ final class GuardControllerScopeTest extends TestCase
             }
         }
     }
+
+    /**
+     * Every endpoint, Fix agent settings included, checks for a super-admin
+     * before it does anything: these install software, change the agent's
+     * config and approve its keys.
+     */
+    public function testEveryEndpointChecksForASuperAdminFirst(): void
+    {
+        $class = new \ReflectionClass(GuardController::class);
+        $lines = file((string) $class->getFileName());
+        $endpoints = [];
+        foreach ($class->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            if ($method->getDeclaringClass()->getName() !== GuardController::class) {
+                continue;
+            }
+            $endpoints[] = $method->getName();
+            $body = implode('', array_slice($lines, $method->getStartLine(), $method->getEndLine() - $method->getStartLine()));
+            $first = preg_match('/\{\s*([^;]+;)/', $body, $m) ? trim($m[1]) : '';
+            $this->assertSame('$this->requireSuperAdmin($request);', $first, $method->getName() . ' must check for a super-admin first');
+        }
+        $this->assertContains('fixSettings', $endpoints);
+
+        $plugin = (string) file_get_contents(__DIR__ . '/../guard-helper.php');
+        $this->assertStringContainsString("\$routes->post('/' . self::SLUG . '/fix-settings', [\$controller, 'fixSettings']);", $plugin);
+    }
 }

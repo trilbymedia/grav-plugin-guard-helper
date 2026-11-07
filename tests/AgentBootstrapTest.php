@@ -420,6 +420,92 @@ final class AgentBootstrapTest extends TestCase
         $this->assertFalse($boot->isPaired(), 'asked again once the file is readable');
     }
 
+    /**
+     * A site removed from Guard Cloud and added again, or paired again with
+     * an agent that kept its keys: restore is on under the old entry's key,
+     * and Guard Cloud now offers its own. The switch shows it off, and
+     * turning it on approves the new key.
+     */
+    public function testAScopeOnUnderAnotherPairingsKeyShowsOff(): void
+    {
+        $boot = $this->installedAgent();
+        $old = bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));
+        $new = bin2hex(sodium_crypto_sign_publickey(sodium_crypto_sign_keypair()));
+        $this->agentState()->set('keyring.cloud.restore', $old);
+        $this->agentState()->set('offer.cloud.restore', $old);
+        $this->assertSame(['restore'], $boot->scopes()['enabled'], 'on under the key that was offered');
+
+        $this->agentState()->set('offer.cloud.restore', $new);
+        $this->assertSame([], $boot->scopes()['enabled']);
+        $this->assertSame(['restore'], $boot->scopes()['offered']);
+
+        $this->assertSame(['restore'], $boot->setScope('restore', true)['enabled']);
+        $this->assertSame($new, $this->agentState()->get('keyring.cloud.restore'));
+    }
+
+    /**
+     * After the site moved to another folder the agent's config still names
+     * the old one, so it doesn't know where Grav is; after a domain change it
+     * calls the old address. Fix agent settings points it at this Grav and
+     * the address in use, and leaves the key and the rest of the config.
+     */
+    public function testFixSettingsPointsTheAgentAtThisGravAndAddress(): void
+    {
+        $boot = $this->installedAgent();
+        mkdir($this->gravRoot . '/system', 0777, true);
+        file_put_contents($this->gravRoot . '/system/defines.php', "<?php\ndefine('GRAV_VERSION', '1.7.52');\n");
+        $file = $this->gravRoot . '/_guard/data/config.php';
+        $config = include $file;
+        $config['grav_root'] = '/home/old/public_html';
+        $config['site_url'] = 'https://old.example';
+        file_put_contents($file, '<?php return ' . var_export($config, true) . ";\n");
+        $key = (string) file_get_contents($this->gravRoot . '/_guard/keys/agent.key.php');
+
+        $before = $boot->agentSettings('https://new.example/');
+        $this->assertFalse($before['root_ok']);
+        $this->assertFalse($before['url_ok']);
+        $this->assertSame('/home/old/public_html', $before['grav_root']);
+        $this->assertSame(realpath($this->gravRoot), $before['expected_root']);
+        $this->assertSame('https://new.example', $before['expected_url']);
+
+        $after = $boot->fixSettings('https://new.example/');
+
+        $this->assertTrue($after['root_ok']);
+        $this->assertTrue($after['url_ok']);
+        $written = include $file;
+        $this->assertSame(realpath($this->gravRoot), $written['grav_root']);
+        $this->assertSame('https://new.example', $written['site_url']);
+        $this->assertSame(array_diff_key($config, ['grav_root' => 1, 'site_url' => 1]), array_diff_key($written, ['grav_root' => 1, 'site_url' => 1]));
+        $this->assertSame($key, (string) file_get_contents($this->gravRoot . '/_guard/keys/agent.key.php'));
+    }
+
+    public function testFixSettingsKeepsAnAddressItCannotUse(): void
+    {
+        $boot = $this->installedAgent();
+        mkdir($this->gravRoot . '/system', 0777, true);
+        file_put_contents($this->gravRoot . '/system/defines.php', "<?php\n");
+        $boot->pinSiteUrl('https://example.com');
+
+        $boot->fixSettings('not a url');
+
+        $this->assertSame('https://example.com', (include $this->gravRoot . '/_guard/data/config.php')['site_url']);
+    }
+
+    public function testFixSettingsNeedsAnAgentAndAGravFolder(): void
+    {
+        try {
+            (new AgentBootstrap($this->gravRoot))->fixSettings('https://example.com');
+            $this->fail('fixed an agent that is not installed');
+        } catch (\Grav\Plugin\GuardHelper\BootstrapException $e) {
+            $this->assertStringContainsString('not installed', $e->getMessage());
+        }
+
+        $boot = $this->installedAgent();
+        $this->expectException(\Grav\Plugin\GuardHelper\BootstrapException::class);
+        $this->expectExceptionMessage('does not look like the Grav folder');
+        $boot->fixSettings('https://example.com');
+    }
+
     public function testTheSwitchRefusesAnUnknownScope(): void
     {
         $boot = $this->installedAgent();

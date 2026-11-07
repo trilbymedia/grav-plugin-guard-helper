@@ -782,6 +782,117 @@ final class AgentBootstrap
         ) !== false;
     }
 
+    /**
+     * The two settings the agent takes from the site itself, compared with
+     * what this Grav knows: the Grav folder it manages (data/config.php
+     * `grav_root`) and the site's address (`site_url`). After a site moves
+     * to another folder the agent no longer knows where Grav is, and after a
+     * domain change it calls the old address; fixSettings() puts both right
+     * without a shell.
+     *
+     * @param string|null $siteUrl the address the admin is using now
+     * @return array{grav_root:?string, site_url:?string, expected_root:string, expected_url:?string, root_ok:bool, url_ok:bool}|null
+     *   null when there is no agent, or its config can't be read
+     */
+    public function agentSettings(?string $siteUrl): ?array
+    {
+        $config = $this->readConfig();
+        if ($config === null) {
+            return null;
+        }
+        $root = isset($config['grav_root']) && is_string($config['grav_root']) && $config['grav_root'] !== '' ? $config['grav_root'] : null;
+        $url = isset($config['site_url']) && is_string($config['site_url']) && $config['site_url'] !== '' ? $config['site_url'] : null;
+        $expectedRoot = $this->realGravRoot();
+        $expectedUrl = self::siteUrl($siteUrl);
+        $realRoot = $root !== null && is_dir($root) ? realpath($root) : false;
+
+        return [
+            'grav_root' => $root,
+            'site_url' => $url,
+            'expected_root' => $expectedRoot,
+            'expected_url' => $expectedUrl,
+            'root_ok' => $realRoot !== false && $realRoot === $expectedRoot,
+            // An address the agent doesn't have yet is filled in on its own
+            // (pinSiteUrl()); one it has that differs is for the admin to fix.
+            'url_ok' => $expectedUrl === null || $url === null || rtrim($url, '/') === $expectedUrl,
+        ];
+    }
+
+    /**
+     * Point the agent at this Grav and at the address the admin is using:
+     * the repair for an agent that lost track of Grav after the site moved
+     * folders, or still calls an old domain. Only ever run behind the site's
+     * own super-admin login, never from Guard Cloud. The agent's key, its
+     * pairing and the rest of its config are left as they are.
+     *
+     * @param string|null $siteUrl the address the admin is using now; left
+     *   alone when it isn't a usable absolute URL
+     * @return array{grav_root:?string, site_url:?string, expected_root:string, expected_url:?string, root_ok:bool, url_ok:bool}
+     * @throws BootstrapException
+     */
+    public function fixSettings(?string $siteUrl): array
+    {
+        if (!$this->isInstalled()) {
+            throw new BootstrapException('The Guard Agent is not installed yet — set it up first.');
+        }
+        $config = $this->readConfig();
+        if ($config === null) {
+            throw new BootstrapException('The agent configuration is unreadable. Delete the _guard folder and set the agent up again.');
+        }
+        $root = $this->realGravRoot();
+        if (!is_file($root . '/system/defines.php')) {
+            throw new BootstrapException('This does not look like the Grav folder (no system/defines.php), so the agent was left as it is.');
+        }
+        $config['grav_root'] = $root;
+        $site = self::siteUrl($siteUrl);
+        if ($site !== null) {
+            $config['site_url'] = $site;
+        }
+        if (!$this->writeConfig($config)) {
+            throw new BootstrapException('Could not save the agent configuration. Check that _guard/data is writable by the web server.');
+        }
+
+        return $this->agentSettings($siteUrl) ?? [];
+    }
+
+    /** This Grav's folder, symlinks resolved, as the agent's config stores it. */
+    private function realGravRoot(): string
+    {
+        $real = realpath($this->gravRoot);
+
+        return $real !== false ? $real : $this->gravRoot;
+    }
+
+    /** @return array<string,mixed>|null the agent's data/config.php, or null when missing or unreadable */
+    private function readConfig(): ?array
+    {
+        if (!$this->isInstalled()) {
+            return null;
+        }
+        $file = $this->guardDir . '/data/config.php';
+        $config = is_file($file) ? @include $file : null;
+
+        return is_array($config) && !empty($config['db']) ? $config : null;
+    }
+
+    /** @param array<string,mixed> $config */
+    private function writeConfig(array $config): bool
+    {
+        $file = $this->guardDir . '/data/config.php';
+        $ok = file_put_contents(
+            $file,
+            "<?php /* Guard Agent config — pinned host-side; do not expose. */ return "
+                . var_export($config, true) . ";\n"
+        ) !== false;
+        if ($ok && function_exists('opcache_invalidate')) {
+            // The agent includes this file on every request; a cached copy
+            // would keep the old folder until opcache noticed.
+            @opcache_invalidate($file, true);
+        }
+
+        return $ok;
+    }
+
     /** The scoped permissions a switch can turn on, in the order the page lists them. */
     public const SCOPES = ['restore', 'rescue', 'sso'];
 
@@ -807,8 +918,19 @@ final class AgentBootstrap
             return ['supported' => false, 'enabled' => array_values($manager->enabledScopes()), 'offered' => []];
         }
         $state = $manager->scopeState();
+        // A scope on under a key other than the one Guard Cloud now offers
+        // was approved for an earlier pairing (the site removed and added
+        // again, or paired again with an agent that kept its keys). Guard
+        // Cloud signs with the new key, so for it the scope is off: show it
+        // off, and the switch approves the new key.
+        $offered = $manager->offeredScopes();
+        $enabled = array_values(array_filter($state['enabled'], function ($scope) use ($offered): bool {
+            $current = $this->stateValue('keyring.cloud.' . $scope);
 
-        return ['supported' => true, 'enabled' => array_values($state['enabled']), 'offered' => array_values($state['offered'])];
+            return !isset($offered[$scope]) || !is_string($current) || hash_equals((string) $offered[$scope], $current);
+        }));
+
+        return ['supported' => true, 'enabled' => $enabled, 'offered' => array_values($state['offered'])];
     }
 
     /**

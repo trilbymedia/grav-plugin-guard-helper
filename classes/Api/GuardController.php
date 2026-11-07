@@ -27,6 +27,7 @@ use Psr\Http\Message\ServerRequestInterface;
  *   POST /guard-helper/repair  — a fresh pairing code for an installed agent
  *   POST /guard-helper/webhook — switch on Grav's scheduler webhook for the agent
  *   POST /guard-helper/scopes  — turn remote restore, rescue or one-click login on/off
+ *   POST /guard-helper/fix-settings — point the agent at this Grav folder and address
  *
  * All are super-admin only: installing software and minting a per-site key is
  * not a delegate-able action. The trust-critical cloud URL comes from plugin
@@ -98,7 +99,35 @@ class GuardController extends AbstractApiController
             // Remote restore, rescue and one-click login: off until switched on
             // here. Null when there is no agent to ask.
             'scopes'        => $boot->scopes(),
+            // The Grav folder and address the agent uses, against this site's:
+            // after a move to another folder or domain, Fix agent settings.
+            'settings'      => $boot->agentSettings($this->siteRoot()),
         ]);
+    }
+
+    /**
+     * POST /guard-helper/fix-settings — set the agent's Grav folder to this
+     * site's and its address to the one in use. The fix for an agent that
+     * doesn't know where Grav is after the site moved folders, without SSH.
+     * The plugin runs inside this Grav, so it knows the real folder; Guard
+     * Cloud never sets either.
+     */
+    public function fixSettings(ServerRequestInterface $request): ResponseInterface
+    {
+        $this->requireSuperAdmin($request);
+
+        $boot = $this->bootstrap();
+        try {
+            $settings = $boot->fixSettings($this->siteRoot());
+        } catch (BootstrapException $e) {
+            throw new ValidationException($e->getMessage());
+        } catch (\Throwable $e) {
+            $this->grav['log']->error('Guard Helper could not fix the agent settings: ' . $e->getMessage(), ['exception' => $e]);
+            throw new ValidationException('Could not fix the agent settings: ' . $e->getMessage());
+        }
+
+        // The address decides whether the scheduler webhook can be used.
+        return ApiResponse::create(['settings' => $settings, 'webhook' => $this->webhookStatus()]);
     }
 
     /**

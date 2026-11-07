@@ -5,7 +5,7 @@
 // super-admin download + verify + unpack + pair the standalone agent in one
 // click, then displays the single-use pairing code to enter in Guard Cloud.
 // Backed by GuardController (GET /guard-helper/status, /latest and /security,
-// POST /guard-helper/setup, /repair and /webhook).
+// POST /guard-helper/setup, /repair, /webhook, /scopes and /fix-settings).
 //
 // Below the agent card sits the free vulnerability check: this site's
 // installed packages against Guard Cloud's public advisory feed. The
@@ -181,6 +181,21 @@ class GuardHelperPage extends HTMLElement {
 		}
 	}
 
+	// Point the agent at this Grav folder and the address in use: the fix
+	// after the site moved folders or domains, with no SSH.
+	async _fixSettings() {
+		if (this._state.busy) return;
+		this._patch({ busy: true, settingsError: null });
+		try {
+			const r = await this._api('POST', '/guard-helper/fix-settings', {});
+			const data = { ...(this._state.data || {}), settings: r.settings };
+			if (r.webhook) data.webhook = r.webhook;
+			this._patch({ busy: false, data, settingsFixed: true });
+		} catch (e) {
+			this._patch({ busy: false, settingsError: e.message });
+		}
+	}
+
 	async _setScope(scope, on) {
 		if (this._state.busy) return;
 		this._patch({ busy: true, scopeError: null });
@@ -204,6 +219,7 @@ class GuardHelperPage extends HTMLElement {
 		this.shadowRoot.getElementById('repair-btn')?.addEventListener('click', () => this._repair());
 		this.shadowRoot.getElementById('retry-btn')?.addEventListener('click', () => this._loadStatus());
 		this.shadowRoot.getElementById('webhook-btn')?.addEventListener('click', () => this._enableWebhook());
+		this.shadowRoot.getElementById('fix-btn')?.addEventListener('click', () => this._fixSettings());
 		this.shadowRoot.getElementById('sec-refresh')?.addEventListener('click', () => this._loadSecurity(true));
 		this.shadowRoot.querySelectorAll('[data-scope]').forEach((el) =>
 			el.addEventListener('change', () => this._setScope(el.dataset.scope, el.checked)));
@@ -242,7 +258,7 @@ class GuardHelperPage extends HTMLElement {
 		if (s.justInstalled && conn === 'unpaired') {
 			return {
 				tone: 'off', title: 'Guard Agent installed, pairing started',
-				help: 'Enter the pairing code below in Guard Cloud → Fleet → Add Site to add this site to your fleet.',
+				help: 'Enter the pairing code below in Guard Cloud: Sites → Add site.',
 			};
 		}
 		if (conn === 'connected') {
@@ -264,7 +280,7 @@ class GuardHelperPage extends HTMLElement {
 		}
 		return {
 			tone: 'off', title: 'Installed, not paired yet',
-			help: 'To add this site to your fleet, generate a pairing code and enter it in Guard Cloud → Fleet → Add Site. Codes are single-use and expire after 15 minutes.',
+			help: 'To add this site to Guard Cloud, show a pairing code and enter it in Guard Cloud: Sites → Add site, or Pair again on the site\'s row if it is already there. Codes are single-use and expire after 15 minutes.',
 		};
 	}
 
@@ -351,6 +367,36 @@ class GuardHelperPage extends HTMLElement {
 		</div>`;
 	}
 
+	// The Grav folder and address the agent uses. After the site moves to
+	// another folder the agent no longer knows where Grav is; after a domain
+	// change it calls the old address. Either shows here with the fix.
+	_settings(s) {
+		const st = s.data?.settings;
+		if (!st) return '';
+		const err = s.settingsError ? `<div class="err">${esc(s.settingsError)}</div>` : '';
+		const btn = (primary) => `<button id="fix-btn" class="btn${primary ? '' : ' ghost'} sm" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Fix agent settings'}</button>`;
+		const rows = `<p class="hint">Grav folder: <code>${esc(st.grav_root || 'not set')}</code>${st.root_ok ? '' : ` (this site: <code>${esc(st.expected_root)}</code>)`}<br>
+			Site address: <code>${esc(st.site_url || 'not set')}</code>${st.url_ok || !st.expected_url ? '' : ` (in use now: <code>${esc(st.expected_url)}</code>)`}</p>`;
+		if (!st.root_ok || !st.url_ok) {
+			const what = !st.root_ok
+				? "The Guard Agent doesn't know where Grav is on this server, usually because the site moved to another folder. Updates, backups and scans fail until it does."
+				: 'The Guard Agent still uses an old address for this site, so it calls the wrong place for the health check after an update and for Grav\'s scheduled jobs.';
+			return `<div class="status-row warn-row"><span class="dot"></span>
+				<div class="row-body">
+					<strong>The agent's settings don't match this site</strong>
+					<p class="hint">${esc(what)} Fix agent settings sets them to this site's folder and the address you're using now. The pairing and the agent's key stay as they are.</p>
+					${rows}${err}${btn(true)}
+				</div></div>`;
+		}
+		return `<details class="adv"${s.settingsFixed || s.settingsError ? ' open' : ''}>
+			<summary>Agent settings</summary>
+			<div class="adv-body">
+				${s.settingsFixed ? '<p class="hint">Saved. The agent uses these from its next request.</p>' : ''}
+				${rows}${err}${btn(false)}
+			</div>
+		</details>`;
+	}
+
 	// Remote restore, rescue and one-click login. Each is off until switched
 	// on here: turning one on approves the key Guard Cloud offered for it,
 	// which Guard Cloud can never do itself.
@@ -415,7 +461,7 @@ class GuardHelperPage extends HTMLElement {
 		const label = s.busy ? 'Working…' : (shown ? 'New pairing code' : (paired ? 'Show a new pairing code' : 'Show pairing code'));
 		const btn = `<button id="repair-btn" class="btn${paired || shown ? ' ghost' : ''}" ${s.busy ? 'disabled' : ''}>${label}</button>`;
 		const note = paired && !s.result
-			? `<p class="hint">Only needed to add this site to Guard Cloud again; the current pairing keeps working.</p>`
+			? `<p class="hint">Only needed to pair this site again; the current pairing keeps working until Guard Cloud takes the new code. Pairing again turns the permissions below off until you switch them on again.</p>`
 			: '';
 		if (!s.result) {
 			return `<div class="pair-block">${btn}${note}</div>`;
@@ -424,7 +470,7 @@ class GuardHelperPage extends HTMLElement {
 		return `<div class="pair-block">
 			${btn}
 			<div class="pair-out">
-				<p class="muted">Enter this in <strong>Guard Cloud → Fleet → Add Site</strong> within ${ttlMin} minutes. Single-use; use <strong>New pairing code</strong> if it expires.</p>
+				<p class="muted">Enter this in Guard Cloud within ${ttlMin} minutes: <strong>Sites → Add site</strong> for a new site, or <strong>Pair again</strong> on the site's row if it is already there. Single-use; use <strong>New pairing code</strong> if it expires.</p>
 				${this._codeRow('Pairing code', s.result.code)}
 			</div>
 		</div>`;
@@ -542,6 +588,7 @@ class GuardHelperPage extends HTMLElement {
 				${this._versions(s)}
 				<p class="muted">${esc(c.help)}</p>
 				${this._codeRow('Agent endpoint', s.data?.endpoint || s.result?.endpoint || s.data?.endpoint_path || '')}
+				${this._settings(s)}
 				${this._webhook(s)}
 				${this._cron(s)}
 				${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}

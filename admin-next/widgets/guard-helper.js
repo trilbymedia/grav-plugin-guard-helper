@@ -153,12 +153,12 @@ class GuardHelperWidget extends HTMLElement {
 				return `<div class="card">${head}${head2}
 					<div class="lbl">Pairing code</div>
 					<div class="code">${esc(s.result.code)}</div>
-					<p class="muted">Enter it in Guard Cloud → Fleet → Add Site within ${ttlMin} min.</p>
+					<p class="muted">Enter it in Guard Cloud (Sites → Add site, or Pair again on the site's row) within ${ttlMin} min.</p>
 					<p class="muted signup">No account? <a href="${esc(signup)}" target="_blank" rel="noopener">Sign up free at ${esc(host(signup))}</a>.</p></div>`;
 			}
 			if (conn === 'unpaired') {
 				return `<div class="card">${head}${head2}
-					<p class="muted">Enter a pairing code in Guard Cloud → Fleet → Add Site to add this site to your fleet.</p>
+					<p class="muted">Show a pairing code and enter it in Guard Cloud: Sites → Add site.</p>
 					${err}
 					<button id="repair-btn" class="btn" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Working…' : 'Show pairing code'}</button></div>`;
 			}
