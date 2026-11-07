@@ -116,6 +116,13 @@ final class SecurityChecker
                 continue;
             }
             $advisory['installed_version'] = $versions[$key];
+            // The classic Admin plugin on Grav 2: its fixes are in Admin 1.11
+            // pre-releases only, and Grav 2 uses Admin 2, so the advice is to
+            // remove it rather than update it (as Guard Cloud says).
+            if ($key === 'plugin:admin' && isset($versions['core:core']) && !$grav1) {
+                $advisory['fixed_in'] = null;
+                $advisory['remove_instead'] = true;
+            }
             // What the package calls itself ("Form", "Grav"), for display.
             $advisory['package_name'] = $names[$key] !== '' ? $names[$key] : (string)($advisory['slug'] ?? '');
             $findings[] = $advisory;

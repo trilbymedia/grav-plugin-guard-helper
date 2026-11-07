@@ -1171,7 +1171,7 @@ class GuardHelperPlugin extends Plugin
                 . ' <span class="sev ' . $sev[0] . '">' . $e($sev[1]) . '</span></div>'
                 . '<div>' . $title . (!empty($f['advisory_id']) ? ' <span class="muted">' . $e($f['advisory_id']) . '</span>' : '') . '</div>'
                 . '<div class="muted">Installed <code>' . $e($f['installed_version'] ?? '') . '</code> &middot; '
-                . (!empty($f['fixed_in']) ? 'fixed in <code>' . $e($f['fixed_in']) . '</code>' : 'no fix yet') . '</div>'
+                . (!empty($f['remove_instead']) ? 'remove the classic Admin plugin: Grav 2 uses Admin 2' : (!empty($f['fixed_in']) ? 'fixed in <code>' . $e($f['fixed_in']) . '</code>' : 'no fix yet')) . '</div>'
                 . '</li>';
         }
         $n = count($findings);

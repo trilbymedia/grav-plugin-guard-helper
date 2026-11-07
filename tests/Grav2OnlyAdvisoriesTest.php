@@ -96,4 +96,17 @@ final class Grav2OnlyAdvisoriesTest extends TestCase
         $this->assertSame(['A1', 'A2'], array_column(SecurityChecker::match($this->site('1.7.40'), $feed), 'advisory_id'));
         $this->assertSame([], SecurityChecker::grav2OnlyFor($this->site('1.7.40'), $feed));
     }
+
+    public function testClassicAdminOnGrav2IsToBeRemovedNotUpdated(): void
+    {
+        $advisories = [['advisory_id' => 'GHSA-mpjj-4688-3fxg', 'type' => 'plugin', 'slug' => 'admin', 'affected' => '<1.11.0-beta.1', 'fixed_in' => '1.11.0-beta.1', 'grav2_only' => true]];
+        $on2 = SecurityChecker::match([['type' => 'core', 'slug' => 'core', 'version' => '2.2.19'], ['type' => 'plugin', 'slug' => 'admin', 'version' => '1.10.56']], $advisories);
+        $this->assertCount(1, $on2);
+        $this->assertNull($on2[0]['fixed_in']);
+        $this->assertTrue($on2[0]['remove_instead']);
+
+        $form = SecurityChecker::match([['type' => 'core', 'slug' => 'core', 'version' => '2.2.19'], ['type' => 'plugin', 'slug' => 'form', 'version' => '9.1.0']], [['advisory_id' => 'GHSA-x', 'type' => 'plugin', 'slug' => 'form', 'affected' => '<9.1.40', 'fixed_in' => '9.1.40']]);
+        $this->assertSame('9.1.40', $form[0]['fixed_in']);
+        $this->assertArrayNotHasKey('remove_instead', $form[0]);
+    }
 }

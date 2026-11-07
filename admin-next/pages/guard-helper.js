@@ -573,7 +573,9 @@ class GuardHelperPage extends HTMLElement {
 			? `<a href="${esc(ref)}" target="_blank" rel="noopener">${esc(f.title || f.advisory_id)}</a>`
 			: esc(f.title || f.advisory_id);
 		const type = { core: 'Grav core', plugin: 'Plugin', theme: 'Theme' }[f.type] || f.type || '';
-		const fixed = f.fixed_in ? `<span class="ver-cell">${esc(f.fixed_in)}</span>` : '<span class="muted">No fix yet</span>';
+		const fixed = f.remove_instead
+			? '<span class="muted">Remove the classic Admin plugin: Grav 2 uses Admin 2</span>'
+			: (f.fixed_in ? `<span class="ver-cell">${esc(f.fixed_in)}</span>` : '<span class="muted">No fix yet</span>');
 		return `<tr>
 			<td><div class="pkg">${esc(f.package_name || f.slug)}</div>${f.type === 'core' ? '' : `<div class="sub">${esc(type)}</div>`}</td>
 			<td class="ver-cell">${esc(f.installed_version)}</td>
