@@ -1,3 +1,9 @@
+# v1.0.8
+## 11/07/2026
+
+1. [](#improved)
+    * The vulnerability check on a Grav 1.7 site says how many known security issues are fixed only in Grav 2, and links to the Grav 2 migration guide. Updating cannot clear those, so they are no longer listed as vulnerabilities to update, and a notice on the Guard page and the dashboard says Grav 1.7 only gets some security fixes
+
 # v1.0.7
 ## 11/07/2026
 

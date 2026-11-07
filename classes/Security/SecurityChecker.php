@@ -21,6 +21,9 @@ use Grav\Plugin\GuardHelper\LookupCache;
  */
 final class SecurityChecker
 {
+    /** The first Grav 2 pre-release: the 1.8.0 betas became Grav 2.0. */
+    public const GRAV2_START = '1.8.0-beta.1';
+
     /** @var Grav */
     private $grav;
     /** @var LookupCache|null */
@@ -45,8 +48,11 @@ final class SecurityChecker
      * `php` is whether this site's PHP still gets security fixes
      * (PhpSupport::check), worked out on the site, so it is there whatever
      * the feed did.
+     * `grav2_only` is how many known issues on a Grav 1.x site are fixed only
+     * in Grav 2 (grav2OnlyFor); they are not in `findings`, since updating
+     * cannot clear them. It is 0 on Grav 2, and when the feed is unknown.
      *
-     * @return array{status:string, checked_at:?string, package_count:int, advisory_count:?int, findings:array<int,array<string,mixed>>, php:array<string,mixed>}
+     * @return array{status:string, checked_at:?string, package_count:int, advisory_count:?int, findings:array<int,array<string,mixed>>, grav2_only:int, php:array<string,mixed>}
      */
     public function run(string $feedUrl, bool $refresh = false, bool $askCloud = true): array
     {
@@ -55,7 +61,7 @@ final class SecurityChecker
         $source = new AdvisoryFeed($feedUrl, $this->cache ?? LookupCache::forGrav($this->grav));
         $feed = $askCloud ? $source->load($refresh) : $source->forDisplay();
         if ($feed === null) {
-            return ['status' => 'pending', 'checked_at' => null, 'package_count' => count($installed), 'advisory_count' => null, 'findings' => [], 'php' => $php];
+            return ['status' => 'pending', 'checked_at' => null, 'package_count' => count($installed), 'advisory_count' => null, 'findings' => [], 'grav2_only' => 0, 'php' => $php];
         }
 
         return [
@@ -64,6 +70,7 @@ final class SecurityChecker
             'package_count' => count($installed),
             'advisory_count' => $feed['ok'] ? count($feed['advisories']) : null,
             'findings' => $feed['ok'] ? self::match($installed, $feed['advisories']) : [],
+            'grav2_only' => $feed['ok'] ? count(self::grav2OnlyFor($installed, $feed['advisories'])) : 0,
             'php' => $php,
         ];
     }
@@ -76,6 +83,10 @@ final class SecurityChecker
 
     /**
      * Match installed packages against advisories. Pure — the testable core.
+     *
+     * On Grav 1.x an advisory marked `grav2_only` is left out: its fix exists
+     * only on the Grav 2 line, so updating cannot clear it (see grav2OnlyFor).
+     * An advisory without that field is matched as ever.
      *
      * @param array<int,array{type:string, slug:string, version:string, name?:string}> $installed
      * @param array<int,array<string,mixed>> $advisories
@@ -90,10 +101,15 @@ final class SecurityChecker
             $names[$pkg['type'] . ':' . $pkg['slug']] = (string)($pkg['name'] ?? '');
         }
 
+        $grav1 = isset($versions['core:core']) && self::isGrav1($versions['core:core']);
+
         $findings = [];
         foreach ($advisories as $advisory) {
             $key = ($advisory['type'] ?? '') . ':' . ($advisory['slug'] ?? '');
             if (!isset($versions[$key])) {
+                continue;
+            }
+            if ($grav1 && self::flag($advisory['grav2_only'] ?? false)) {
                 continue;
             }
             if (!Constraint::satisfies($versions[$key], (string)($advisory['affected'] ?? ''))) {
@@ -112,6 +128,55 @@ final class SecurityChecker
         });
 
         return $findings;
+    }
+
+    /**
+     * The advisories fixed only on Grav 2 that cover a Grav 1.x site: those
+     * whose `grav1_affected` range holds the installed version of their
+     * package. Empty on Grav 2, or when the core version is not known. Ids are
+     * counted once, by the GHSA id without any "/suffix", so a record split by
+     * package or line ("GHSA-x/admin", "GHSA-x/1.7") counts once.
+     *
+     * @param array<int,array{type:string, slug:string, version:string}> $installed
+     * @param array<int,array<string,mixed>> $advisories
+     * @return array<int,string> advisory ids, without any "/suffix"
+     */
+    public static function grav2OnlyFor(array $installed, array $advisories): array
+    {
+        $versions = [];
+        foreach ($installed as $pkg) {
+            $versions[$pkg['type'] . ':' . $pkg['slug']] = (string)$pkg['version'];
+        }
+        if (!isset($versions['core:core']) || !self::isGrav1($versions['core:core'])) {
+            return [];
+        }
+
+        $ids = [];
+        foreach ($advisories as $advisory) {
+            if (!self::flag($advisory['grav2_only'] ?? false)) {
+                continue;
+            }
+            $range = isset($advisory['grav1_affected']) && is_string($advisory['grav1_affected']) ? $advisory['grav1_affected'] : '';
+            $key = ($advisory['type'] ?? '') . ':' . ($advisory['slug'] ?? '');
+            if ($range === '' || !isset($versions[$key]) || !Constraint::satisfies($versions[$key], $range)) {
+                continue;
+            }
+            $ids[explode('/', (string)($advisory['advisory_id'] ?? ''), 2)[0]] = true;
+        }
+
+        return array_map('strval', array_keys($ids));
+    }
+
+    /** Is this Grav core version on the 1.x line (older than the first Grav 2 pre-release)? */
+    public static function isGrav1(string $coreVersion): bool
+    {
+        return Constraint::satisfies($coreVersion, '<' . self::GRAV2_START);
+    }
+
+    /** @param mixed $v the feed's JSON boolean, or a stored 't' / '1' / 'true' */
+    private static function flag($v): bool
+    {
+        return $v === true || $v === 't' || $v === 1 || $v === '1' || $v === 'true';
     }
 
     /** critical 0 … low 3, anything unnamed last. */

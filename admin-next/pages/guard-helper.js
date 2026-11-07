@@ -527,7 +527,7 @@ class GuardHelperPage extends HTMLElement {
 			body = `<div class="status-row ok-row"><span class="dot"></span><div>
 				<strong>No known vulnerabilities</strong>
 				<p class="hint">${esc(pkgs)} checked against ${esc(d.advisory_count)} published advisor${d.advisory_count === 1 ? 'y' : 'ies'}.${checked}</p>
-				</div></div>`;
+				</div></div>${this._grav2(d.grav2_only)}`;
 		} else {
 			const n = d.findings.length;
 			body = `<div class="status-row bad-row"><span class="dot"></span><div>
@@ -537,10 +537,24 @@ class GuardHelperPage extends HTMLElement {
 				<div class="table-scroll"><table>
 					<thead><tr><th>Package</th><th>Installed</th><th>Advisory</th><th>Severity</th><th>Fixed in</th></tr></thead>
 					<tbody>${d.findings.map((f) => this._findingRow(f)).join('')}</tbody>
-				</table></div>`;
+				</table></div>${this._grav2(d.grav2_only)}`;
 		}
 
 		return `<section class="card sec" id="security" aria-labelledby="sec-title">${head.replace('<h2>', '<h2 id="sec-title">')}${this._php(d.php)}${body}</section>`;
+	}
+
+	/**
+	 * On Grav 1.x, the known issues that only Grav 2 fixes. They are not in the
+	 * findings, since no update clears them, so this says they exist.
+	 */
+	_grav2(count) {
+		const n = Number(count) || 0;
+		if (n < 1) return '';
+		return `<div class="status-row warn-row" id="grav2-notice"><span class="dot"></span><div>
+			<strong>Grav 1.7 only gets some security fixes.</strong>
+			<p class="hint">${n} known security ${n === 1 ? 'issue is' : 'issues are'} fixed only in Grav 2.</p>
+			<p class="hint">Plan your move to Grav 2. <a href="https://learn.getgrav.org/2/migration" target="_blank" rel="noopener">How to move to Grav 2 →</a></p>
+			</div></div>`;
 	}
 
 	/** Whether this site's PHP still gets security fixes; the words come from the server. */

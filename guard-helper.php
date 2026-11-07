@@ -485,6 +485,22 @@ class GuardHelperPlugin extends Plugin
                     'action'         => ['label' => 'Review', 'url' => $this->absoluteUrl($this->adminNextRoute()) . '#security'],
                 ];
             }
+            // Grav 1.x: issues no update clears. They are not in the count above.
+            $grav2 = $result['status'] === 'ok' ? (int) ($result['grav2_only'] ?? 0) : 0;
+            if ($grav2 > 0) {
+                $notifications['top'][] = [
+                    'id'             => 'guard-helper-grav2',
+                    'title'          => 'Grav 1.7 only gets some security fixes',
+                    'message'        => sprintf(
+                        '%d known security %s fixed only in Grav 2. Plan your move to Grav 2.',
+                        $grav2,
+                        $grav2 === 1 ? 'issue is' : 'issues are'
+                    ),
+                    'icon'           => 'ShieldAlert',
+                    'reappear_after' => '+1 week',
+                    'action'         => ['label' => 'Plan your move', 'url' => 'https://learn.getgrav.org/2/migration'],
+                ];
+            }
         } catch (\Throwable $e) {
             // A failed check must never block the dashboard.
         }
@@ -1066,7 +1082,7 @@ class GuardHelperPlugin extends Plugin
         try {
             $result = $this->securityChecker()->run($this->feedUrl($cloud), false, false);
         } catch (\Throwable $e) {
-            $result = ['status' => 'unknown', 'checked_at' => null, 'package_count' => 0, 'advisory_count' => null, 'findings' => []];
+            $result = ['status' => 'unknown', 'checked_at' => null, 'package_count' => 0, 'advisory_count' => null, 'findings' => [], 'grav2_only' => 0];
         }
         $body = $result['status'] === 'pending'
             ? '<div id="guard-security" data-guard-part="security" data-guard-fail="Unknown: the check could not reach Guard Cloud.">'
@@ -1127,7 +1143,7 @@ class GuardHelperPlugin extends Plugin
                 . '<strong>No known vulnerabilities</strong>'
                 . '<p class="muted">' . $e($pkgs) . ' checked against ' . $count . ' published advisor' . ($count === 1 ? 'y' : 'ies') . '.'
                 . ($when !== '' ? ' Checked ' . $e($when) . '.' : '') . '</p>'
-                . $again . '</div></div>';
+                . $again . '</div>' . $this->grav2Notice($result) . '</div>';
         }
 
         $severities = ['critical' => ['bad', 'Critical'], 'high' => ['bad', 'High'], 'medium' => ['warn', 'Medium'],
@@ -1163,7 +1179,27 @@ class GuardHelperPlugin extends Plugin
         return '<div id="guard-security"><div class="state red">'
             . '<strong>' . $n . ' known vulnerabilit' . ($n === 1 ? 'y' : 'ies') . ' in this site&rsquo;s packages</strong>'
             . '<p class="muted">Update each package to its fixed version.' . ($when !== '' ? ' Checked ' . $e($when) . '.' : '') . '</p></div>'
-            . '<ul class="findings">' . $items . '</ul>' . $again . '</div>';
+            . '<ul class="findings">' . $items . '</ul>' . $this->grav2Notice($result) . $again . '</div>';
+    }
+
+    /**
+     * On Grav 1.x, the known issues that only Grav 2 fixes: they are not in
+     * the findings, since no update clears them, so this says they exist.
+     * Nothing when there are none.
+     *
+     * @param array<string,mixed> $result SecurityChecker::run()
+     */
+    private function grav2Notice(array $result): string
+    {
+        $n = (int) ($result['grav2_only'] ?? 0);
+        if ($n < 1) {
+            return '';
+        }
+
+        return '<div class="state amber" id="guard-grav2"><strong>Grav 1.7 only gets some security fixes.</strong>'
+            . '<p class="muted">' . $n . ' known security ' . ($n === 1 ? 'issue is' : 'issues are') . ' fixed only in Grav 2.</p>'
+            . '<p class="muted">Plan your move to Grav 2. '
+            . '<a href="https://learn.getgrav.org/2/migration" target="_blank" rel="noopener">How to move to Grav 2 &rarr;</a></p></div>';
     }
 
     private function securityChecker(): \Grav\Plugin\GuardHelper\Security\SecurityChecker
