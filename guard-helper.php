@@ -1365,7 +1365,15 @@ class GuardHelperPlugin extends Plugin
                 ' . $this->codeRow($endpoint)
                 . $this->settingsSection($boot, $error, $settingsFixed)
                 . $this->cronDetails($boot)
-                . $this->webhookNotice($webhook) . '
+                . $this->webhookNotice($webhook)
+                // A failed pairing says why right above the button. Pairing
+                // opens the agent's SQLite store in this PHP, so a missing
+                // extension is named up front rather than left to fail with
+                // PDO's "could not find driver".
+                . ($error !== null && in_array($_POST['guard-action'] ?? '', ['repair', 'install', ''], true)
+                    ? '<div class="err">' . $e($error) . '</div>'
+                    : (($missing = AgentBootstrap::missingExtensions(false)) === []
+                        ? '' : '<div class="err">' . $e(AgentBootstrap::missingMessage($missing)) . '</div>')) . '
                 <form method="post">
                     <input type="hidden" name="guard-nonce" value="' . $e(Utils::getNonce(self::NONCE_ACTION)) . '">
                     <input type="hidden" name="guard-action" value="repair">
@@ -1378,18 +1386,11 @@ class GuardHelperPlugin extends Plugin
         } else {
             $errHtml = $error !== null ? '<div class="err">' . $e($error) . '</div>' : '';
 
-            // ext-sodium / ext-zip ship with PHP and are on virtually every
-            // host — only warn (and block) if this server is actually missing one.
-            $missing = [];
-            if (!extension_loaded('sodium')) {
-                $missing[] = 'ext-sodium';
-            }
-            if (!extension_loaded('zip')) {
-                $missing[] = 'ext-zip';
-            }
-            $warn = $missing === [] ? '' : '<div class="err">This server is missing '
-                . $e(implode(' and ', $missing)) . '. Ask your host to enable '
-                . (count($missing) > 1 ? 'them' : 'it') . ' before setting up the agent.</div>';
+            // The extensions ship with PHP and are on nearly every host — only
+            // warn (and block) if this server is actually missing one, and
+            // name exactly which, what for, and how to install it.
+            $missing = AgentBootstrap::missingExtensions();
+            $warn = $missing === [] ? '' : '<div class="err">' . $e(AgentBootstrap::missingMessage($missing)) . '</div>';
             $disabled = $missing === [] ? '' : ' disabled';
 
             $body = $errHtml . '

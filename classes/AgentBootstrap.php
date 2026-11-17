@@ -458,6 +458,77 @@ final class AgentBootstrap
     }
 
     /**
+     * The PHP extensions the agent needs that this server's PHP lacks, keyed
+     * by extension name, each with what the agent uses it for. They ship with
+     * PHP and are on nearly every host, but some distributions package them
+     * separately (Ubuntu's stock PHP has no SQLite until php8.x-sqlite3 is
+     * installed), and without this check the first sign was PDO's bare
+     * "could not find driver" halfway through pairing.
+     *
+     * @param bool $forInstall false for re-pairing an installed agent, which
+     *   needs no unzipping
+     * @return array<string,string>
+     */
+    public static function missingExtensions(bool $forInstall = true): array
+    {
+        $need = [
+            'sodium'     => 'verifies signatures',
+            'zip'        => 'unpacks the agent',
+            'pdo_sqlite' => 'stores the agent\'s state',
+        ];
+        if (!$forInstall) {
+            unset($need['zip']);
+        }
+
+        $missing = [];
+        foreach ($need as $ext => $why) {
+            if (!extension_loaded($ext)) {
+                $missing[$ext] = $why;
+            }
+        }
+
+        return $missing;
+    }
+
+    /**
+     * One sentence naming each missing extension, what it is for, and, for
+     * the ones Debian and Ubuntu package separately, the package to install.
+     *
+     * @param array<string,string> $missing from missingExtensions()
+     */
+    public static function missingMessage(array $missing): string
+    {
+        $parts = [];
+        foreach ($missing as $ext => $why) {
+            $parts[] = $ext . ' (' . $why . ')';
+        }
+        $list = count($parts) > 1
+            ? implode(', ', array_slice($parts, 0, -1)) . ' and ' . end($parts)
+            : $parts[0];
+        $plural = count($parts) > 1;
+
+        $message = 'This server\'s PHP ' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION
+            . ' is missing the ' . $list . ' extension' . ($plural ? 's' : '')
+            . ' the Guard Agent needs. Ask your host to enable ' . ($plural ? 'them' : 'it') . '.';
+
+        // sodium is built into Debian's php-common, so only these two have
+        // a package of their own.
+        $packages = ['pdo_sqlite' => 'sqlite3', 'zip' => 'zip'];
+        $apt = [];
+        foreach (array_keys($missing) as $ext) {
+            if (isset($packages[$ext])) {
+                $apt[] = 'php' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '-' . $packages[$ext];
+            }
+        }
+        if ($apt !== []) {
+            $message .= ' On Ubuntu or Debian: sudo apt install ' . implode(' ', $apt)
+                . ', then restart PHP-FPM or the web server.';
+        }
+
+        return $message;
+    }
+
+    /**
      * Download, verify, unpack, and pair. Returns:
      *   ['code' => '…', 'key_id' => '…', 'endpoint_path' => '/_guard/agent.php', 'ttl' => 900]
      *
@@ -468,11 +539,9 @@ final class AgentBootstrap
      */
     public function install(string $cloudUrl, ?string $siteUrl = null): array
     {
-        if (!extension_loaded('sodium')) {
-            throw new BootstrapException('PHP ext-sodium is required (the agent fails closed without it).');
-        }
-        if (!extension_loaded('zip')) {
-            throw new BootstrapException('PHP ext-zip is required to unpack the agent.');
+        $missing = self::missingExtensions();
+        if ($missing !== []) {
+            throw new BootstrapException(self::missingMessage($missing));
         }
         if ($this->isInstalled()) {
             throw new BootstrapException('The Guard Agent is already installed at _guard/.');
@@ -723,6 +792,10 @@ final class AgentBootstrap
     {
         if (!$this->isInstalled()) {
             throw new BootstrapException('The Guard Agent is not installed yet — set it up first.');
+        }
+        $missing = self::missingExtensions(false);
+        if ($missing !== []) {
+            throw new BootstrapException(self::missingMessage($missing));
         }
 
         [$keyClass, , $stateClass, $pairClass] = $this->loadAgentClasses();

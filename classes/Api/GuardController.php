@@ -77,8 +77,13 @@ class GuardController extends AbstractApiController
             // False when nothing fresh is stored: the page asks /latest.
             'agent_latest_checked' => $latest['checked'],
             'requirements'  => [
-                'sodium' => extension_loaded('sodium'),
-                'zip'    => extension_loaded('zip'),
+                'sodium'     => extension_loaded('sodium'),
+                'zip'        => extension_loaded('zip'),
+                'pdo_sqlite' => extension_loaded('pdo_sqlite'),
+                // The full sentence the setup screen shows (what is missing,
+                // what for, how to install it), or null when nothing is.
+                'message'    => ($m = AgentBootstrap::missingExtensions(!$boot->isInstalled())) === []
+                    ? null : AgentBootstrap::missingMessage($m),
             ],
             // Installing in the browser needs no crontab, but RUNNING still
             // wants one: the tick is the only thing that collects queued work.

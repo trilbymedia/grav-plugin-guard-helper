@@ -465,8 +465,13 @@ class GuardHelperPage extends HTMLElement {
 		const note = paired && !s.result
 			? `<p class="hint">Only needed to pair this site again; the current pairing keeps working until Guard Cloud takes the new code. Pairing again turns the permissions below off until you switch them on again.</p>`
 			: '';
+		// Pairing opens the agent's SQLite store in this PHP, so a missing
+		// extension is named before the button rather than left to fail with
+		// PDO's "could not find driver". An error on screen already says why.
+		const reqMsg = s.data?.requirements?.message;
+		const reqWarn = reqMsg && !s.error && !s.result ? `<div class="err">${esc(reqMsg)}</div>` : '';
 		if (!s.result) {
-			return `<div class="pair-block">${btn}${note}</div>`;
+			return `<div class="pair-block">${reqWarn}${btn}${note}</div>`;
 		}
 		const ttlMin = Math.round((s.result.ttl || 0) / 60);
 		return `<div class="pair-block">
@@ -617,16 +622,14 @@ class GuardHelperPage extends HTMLElement {
 			</div>`;
 		}
 
-		// ext-sodium / ext-zip ship with PHP and are enabled on virtually every
-		// host, so we don't advertise them as "requirements" — we only warn if
-		// this particular server is actually missing one.
+		// The extensions ship with PHP and are enabled on nearly every host,
+		// so we don't advertise them as "requirements". We only warn if this
+		// server is actually missing one, naming which, what for, and how to
+		// install it (the server builds that sentence).
 		const req = s.data?.requirements || {};
-		const missing = [];
-		if (req.sodium === false) missing.push('ext-sodium');
-		if (req.zip === false) missing.push('ext-zip');
-		const reqBad = missing.length > 0;
+		const reqBad = !!req.message || req.sodium === false || req.zip === false || req.pdo_sqlite === false;
 		const warn = reqBad
-			? `<div class="warn">This server is missing ${missing.join(' and ')}. Ask your host to enable ${missing.length > 1 ? 'them' : 'it'} before setting up the agent.</div>`
+			? `<div class="err">${esc(req.message || 'This server is missing a PHP extension the Guard Agent needs. Ask your host to enable sodium, zip and pdo_sqlite.')}</div>`
 			: '';
 
 		return `<div class="card">

@@ -1,3 +1,10 @@
+# v1.0.9
+## 11/17/2026
+
+1. [](#bugfix)
+    * Setting up the Guard Agent on a server whose PHP has no SQLite extension failed with "could not find driver", and so did **Show pairing code**. The Guard page and dashboard widget now check for SQLite before setup, alongside sodium and zip, and say exactly which extension is missing, what the agent uses it for, and on Ubuntu or Debian which package to install. The setup button stays off until it's there
+    * On the classic Admin Guard page, a pairing that failed on an installed agent now shows why, instead of showing nothing
+
 # v1.0.8
 ## 11/07/2026
 

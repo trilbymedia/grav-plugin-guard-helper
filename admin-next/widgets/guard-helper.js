@@ -174,13 +174,12 @@ class GuardHelperWidget extends HTMLElement {
 				<a class="more" href="${esc(pageUrl())}">Open the Guard page →</a></div>`;
 		}
 
-		// Only flag the bundled PHP extensions when one is genuinely missing.
+		// Only flag the bundled PHP extensions when one is genuinely missing,
+		// and name exactly which (the server builds that sentence).
 		const req = s.data?.requirements || {};
-		const miss = [];
-		if (req.sodium === false) miss.push('ext-sodium');
-		if (req.zip === false) miss.push('ext-zip');
-		const reqBad = miss.length > 0;
-		const warn = reqBad ? `<div class="warn">Missing ${miss.join(' and ')} — ask your host to enable ${miss.length > 1 ? 'them' : 'it'}.</div>` : '';
+		const miss = ['sodium', 'zip', 'pdo_sqlite'].filter((x) => req[x] === false);
+		const reqBad = !!req.message || miss.length > 0;
+		const warn = reqBad ? `<div class="warn">${esc(req.message || `Missing PHP ${miss.join(', ')}. Ask your host to enable ${miss.length > 1 ? 'them' : 'it'}.`)}</div>` : '';
 		return `<div class="card">${head}
 			<div class="off">● Not set up</div>
 			<p class="muted">Install the agent to enable fleet updates, backups, and monitoring.</p>

@@ -120,6 +120,29 @@ final class AgentBootstrapTest extends TestCase
         $this->assertSame([], glob($this->gravRoot . '/.guard-install-*') ?: [], 'staging is cleaned up');
     }
 
+    public function testMissingExtensionMessageNamesEachExtensionAndThePackage(): void
+    {
+        $v = PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;
+
+        $one = AgentBootstrap::missingMessage(['pdo_sqlite' => 'stores the agent\'s state']);
+        $this->assertStringContainsString("missing the pdo_sqlite (stores the agent's state) extension the Guard Agent needs", $one);
+        $this->assertStringContainsString('enable it.', $one);
+        $this->assertStringContainsString("sudo apt install php{$v}-sqlite3,", $one);
+
+        $three = AgentBootstrap::missingMessage([
+            'sodium' => 'verifies signatures',
+            'zip' => 'unpacks the agent',
+            'pdo_sqlite' => 'stores the agent\'s state',
+        ]);
+        $this->assertStringContainsString('sodium (verifies signatures), zip (unpacks the agent) and pdo_sqlite', $three);
+        $this->assertStringContainsString('extensions the Guard Agent needs. Ask your host to enable them.', $three);
+        // sodium is part of Debian's php-common, so no package is named for it.
+        $this->assertStringContainsString("sudo apt install php{$v}-zip php{$v}-sqlite3,", $three);
+
+        $sodium = AgentBootstrap::missingMessage(['sodium' => 'verifies signatures']);
+        $this->assertStringNotContainsString('apt install', $sodium);
+    }
+
     public function testRefusesAReleaseTheReleaseKeyDidNotSign(): void
     {
         [$descriptor, $zip] = $this->release(['agent.php' => '<?php // evil']);
